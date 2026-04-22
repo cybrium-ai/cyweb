@@ -27,6 +27,7 @@ pub struct ScanConfig {
     pub rules_file: Option<String>,
     pub openapi_url: Option<String>,
     pub resume: bool,
+    pub full_scan: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -249,10 +250,14 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     all_findings.extend(server_findings);
 
     // Phase 6: YAML signature rules
-    let rules = signatures::rules::load_rules(config.rules_file.as_deref());
+    let rules = if config.full_scan {
+        signatures::rules::load_rules(config.rules_file.as_deref(), true)
+    } else {
+        signatures::rules::load_rules(config.rules_file.as_deref(), false)
+    };
     eprintln!(
         "{}",
-        format!("Phase 6: Signature rules ({} rules)...", rules.len()).cyan()
+        format!("Phase 6: Signature rules ({} rules{})...", rules.len(), if config.full_scan { " — full" } else { "" }).cyan()
     );
     let baseline_hash = compute_baseline(&client, &target).await;
     let rule_findings =

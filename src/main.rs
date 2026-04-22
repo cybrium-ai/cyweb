@@ -105,6 +105,10 @@ enum Commands {
         /// Resume a previously interrupted scan
         #[arg(long)]
         resume: bool,
+
+        /// Full scan with all 4,500+ rules (slower, more thorough)
+        #[arg(long)]
+        full: bool,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -143,6 +147,7 @@ async fn main() {
             rules,
             openapi,
             resume,
+            full,
         } => {
             print_banner();
 
@@ -167,6 +172,7 @@ async fn main() {
                 rules_file: rules,
                 openapi_url: openapi,
                 resume,
+                full_scan: full,
             };
 
             eprintln!(
