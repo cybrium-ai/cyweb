@@ -1,0 +1,37 @@
+[package]
+name = "cyweb"
+version = "0.1.0"
+edition = "2021"
+authors = ["Cybrium AI <hello@cybrium.ai>"]
+description = "Fast, accurate web vulnerability scanner. Scans headers, paths, server configs, and known vulnerabilities."
+license = "MIT"
+repository = "https://github.com/cybrium-ai/cyweb"
+keywords = ["security", "scanner", "web", "vulnerability", "pentest"]
+categories = ["command-line-utilities", "web-programming"]
+
+[[bin]]
+name = "cyweb"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "rustls-tls"], default-features = false }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+colored = "2"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+scraper = "0.22"
+futures = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
