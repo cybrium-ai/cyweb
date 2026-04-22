@@ -10,6 +10,7 @@ mod report;
 mod crawler;
 mod openapi;
 mod checkpoint;
+mod form_login;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -106,6 +107,18 @@ enum Commands {
         #[arg(long)]
         resume: bool,
 
+        /// Form login: username (auto-detects login page and fields)
+        #[arg(long)]
+        login_user: Option<String>,
+
+        /// Form login: password
+        #[arg(long)]
+        login_pass: Option<String>,
+
+        /// Form login: explicit login page URL (optional, auto-discovered if omitted)
+        #[arg(long)]
+        login_url: Option<String>,
+
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
         full: bool,
@@ -150,10 +163,13 @@ async fn main() {
             openapi,
             resume,
             full,
+            login_user,
+            login_pass,
+            login_url,
         } => {
             print_banner();
 
-            let config = scanner::ScanConfig {
+            let mut config = scanner::ScanConfig {
                 target: url.clone(),
                 threads,
                 timeout_secs: timeout,
@@ -176,6 +192,36 @@ async fn main() {
                 resume,
                 full_scan: full,
             };
+
+            // Form-based login: auto-detect login page, submit creds, inject cookies
+            if let (Some(ref user), Some(ref pass)) = (&login_user, &login_pass) {
+                eprintln!("{}", "Form login: authenticating...".cyan());
+                let login_client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(config.timeout_secs))
+                    .user_agent(&config.user_agent)
+                    .cookie_store(true)
+                    .danger_accept_invalid_certs(true)
+                    .build()
+                    .unwrap();
+                let result = form_login::form_login(
+                    &login_client,
+                    &config.target,
+                    user,
+                    pass,
+                    login_url.as_deref(),
+                ).await;
+                if result.success {
+                    eprintln!("  {} Logged in (cookies: {})", "OK".green().bold(), &result.cookies[..result.cookies.len().min(50)]);
+                    // Inject session cookies into the scan config
+                    config.auth_cookie = Some(match config.auth_cookie {
+                        Some(existing) => format!("{existing}; {}", result.cookies),
+                        None => result.cookies,
+                    });
+                } else {
+                    eprintln!("  {} {}", "FAILED".red().bold(), result.error.unwrap_or_default());
+                    eprintln!("  Continuing scan without authentication");
+                }
+            }
 
             eprintln!(
                 "{} {} (threads={}, timeout={}s)",
