@@ -205,6 +205,33 @@ async fn main() {
                         println!("{sarif}");
                     }
                 }
+                "csv" => {
+                    let csv = report::to_csv(&result);
+                    if let Some(path) = &file {
+                        std::fs::write(path, &csv).expect("Failed to write output file");
+                        eprintln!("\n{} {}", "CSV report written to".green(), path);
+                    } else {
+                        println!("{csv}");
+                    }
+                }
+                "xml" => {
+                    let xml = report::to_xml(&result);
+                    if let Some(path) = &file {
+                        std::fs::write(path, &xml).expect("Failed to write output file");
+                        eprintln!("\n{} {}", "XML report written to".green(), path);
+                    } else {
+                        println!("{xml}");
+                    }
+                }
+                "html" | "htm" => {
+                    let html = report::to_html(&result);
+                    if let Some(path) = &file {
+                        std::fs::write(path, &html).expect("Failed to write output file");
+                        eprintln!("\n{} {}", "HTML report written to".green(), path);
+                    } else {
+                        println!("{html}");
+                    }
+                }
                 _ => {
                     report::print_text(&result);
                     if let Some(path) = &file {
