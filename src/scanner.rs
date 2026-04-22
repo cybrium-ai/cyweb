@@ -25,6 +25,8 @@ pub struct ScanConfig {
     pub rate_limit: u32,
     pub tls_check: bool,
     pub rules_file: Option<String>,
+    pub openapi_url: Option<String>,
+    pub resume: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -288,6 +290,34 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         );
         requests_made += spider_requests;
         all_findings.extend(spider_findings);
+    }
+
+    // Phase 9: CVE matching
+    eprintln!("{}", "Phase 9: CVE matching...".cyan());
+    let cve_findings = signatures::cves::match_cves(&server_info);
+    if !cve_findings.is_empty() {
+        eprintln!("  {} known CVEs matched!", cve_findings.len().to_string().red().bold());
+    } else {
+        eprintln!("  No version-specific CVEs matched");
+    }
+    all_findings.extend(cve_findings);
+
+    // Phase 10: OpenAPI/Swagger scanning
+    if let Some(ref spec_url) = config.openapi_url {
+        eprintln!("{}", format!("Phase 10: OpenAPI spec scanning ({spec_url})...").cyan());
+        let api_findings = crate::openapi::scan_openapi(&client, spec_url, &target).await;
+        eprintln!("  {} findings from API spec", api_findings.len());
+        all_findings.extend(api_findings);
+        requests_made += 10;
+    } else {
+        // Auto-discover OpenAPI spec
+        let auto_spec = crate::openapi::scan_openapi(&client, &format!("{target}/openapi.json"), &target).await;
+        if !auto_spec.is_empty() {
+            eprintln!("{}", "Phase 10: OpenAPI spec auto-discovered...".cyan());
+            eprintln!("  {} findings from API spec", auto_spec.len());
+            all_findings.extend(auto_spec);
+            requests_made += 5;
+        }
     }
 
     // Deduplicate findings

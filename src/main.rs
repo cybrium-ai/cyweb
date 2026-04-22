@@ -8,6 +8,8 @@ mod scanner;
 mod signatures;
 mod report;
 mod crawler;
+mod openapi;
+mod checkpoint;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -95,6 +97,14 @@ enum Commands {
         /// Extra YAML rules file
         #[arg(long)]
         rules: Option<String>,
+
+        /// OpenAPI/Swagger spec URL to scan
+        #[arg(long)]
+        openapi: Option<String>,
+
+        /// Resume a previously interrupted scan
+        #[arg(long)]
+        resume: bool,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -131,6 +141,8 @@ async fn main() {
             rate_limit,
             tls_check,
             rules,
+            openapi,
+            resume,
         } => {
             print_banner();
 
@@ -153,6 +165,8 @@ async fn main() {
                 rate_limit,
                 tls_check,
                 rules_file: rules,
+                openapi_url: openapi,
+                resume,
             };
 
             eprintln!(

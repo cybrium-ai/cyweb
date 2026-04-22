@@ -1,5 +1,6 @@
 //! Signature-based detection modules.
 
+pub mod cves;
 pub mod headers;
 pub mod methods;
 pub mod paths;
@@ -7,7 +8,7 @@ pub mod rules;
 pub mod server;
 
 /// A single finding from a scan.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Finding {
     pub id: String,
     pub title: String,
@@ -20,7 +21,7 @@ pub struct Finding {
     pub remediation: String,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Critical,
