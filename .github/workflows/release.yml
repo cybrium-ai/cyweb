@@ -85,9 +85,20 @@ jobs:
           cp target/${{ matrix.target }}/release/cyweb dist/${{ matrix.name }}
           chmod +x dist/${{ matrix.name }}
 
-      - name: Verify signature
+      - name: Notarize macOS binary
         if: matrix.sign
-        run: codesign -dv dist/${{ matrix.name }} 2>&1 | head -5
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent dist/${{ matrix.name }} /tmp/${{ matrix.name }}.zip
+          xcrun notarytool submit /tmp/${{ matrix.name }}.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          echo "Notarization complete for ${{ matrix.name }}"
 
       - uses: actions/upload-artifact@v4
         with:
