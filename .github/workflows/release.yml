@@ -18,15 +18,19 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: cyweb-linux-amd64
+            sign: false
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: cyweb-linux-arm64
+            sign: false
           - target: x86_64-apple-darwin
             os: macos-latest
             name: cyweb-darwin-amd64
+            sign: true
           - target: aarch64-apple-darwin
             os: macos-latest
             name: cyweb-darwin-arm64
+            sign: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +38,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -41,12 +46,49 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+
       - run: cargo build --release --target ${{ matrix.target }}
-      - name: Package
+
+      # ── Apple code signing (macOS builds only) ─────────────────────
+      - name: Import Apple signing certificate
+        if: matrix.sign
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          echo -n "$APPLE_CERTIFICATE_BASE64" | base64 --decode -o $CERT_PATH
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERT_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Sign macOS binary
+        if: matrix.sign
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime target/${{ matrix.target }}/release/cyweb
+          codesign --verify --deep --strict target/${{ matrix.target }}/release/cyweb
+          echo "Signed and verified: ${{ matrix.name }}"
+
+      - name: Package binary
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/cyweb dist/${{ matrix.name }}
           chmod +x dist/${{ matrix.name }}
+
+      - name: Verify signature
+        if: matrix.sign
+        run: codesign -dv dist/${{ matrix.name }} 2>&1 | head -5
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -60,6 +102,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          for dir in */; do
+            (cd "$dir" && sha256sum * >> ../checksums.txt)
+          done
+          cat checksums.txt
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -69,6 +120,7 @@ jobs:
             artifacts/cyweb-linux-arm64/cyweb-linux-arm64
             artifacts/cyweb-darwin-amd64/cyweb-darwin-amd64
             artifacts/cyweb-darwin-arm64/cyweb-darwin-arm64
+            artifacts/checksums.txt
 
   docker:
     needs: build
