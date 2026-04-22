@@ -28,6 +28,13 @@ pub struct ScanConfig {
     pub openapi_url: Option<String>,
     pub resume: bool,
     pub full_scan: bool,
+    pub vhost: Option<String>,
+    pub client_cert: Option<String>,
+    pub client_key: Option<String>,
+    pub tuning: Option<String>,
+    pub save_dir: Option<String>,
+    pub no_lookup: bool,
+    pub platform: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -129,6 +136,24 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         }
     }
 
+    // Client certificate auth
+    if let (Some(ref cert_path), Some(ref key_path)) = (&config.client_cert, &config.client_key) {
+        if let (Ok(cert_pem), Ok(key_pem)) = (std::fs::read(cert_path), std::fs::read(key_path)) {
+            let mut combined = cert_pem;
+            combined.extend_from_slice(b"\n");
+            combined.extend_from_slice(&key_pem);
+            if let Ok(identity) = reqwest::Identity::from_pem(&combined) {
+                builder = builder.identity(identity);
+                eprintln!("  {} client cert", "Auth:".dimmed());
+            }
+        }
+    }
+
+    // DNS override (no-lookup mode)
+    if config.no_lookup {
+        builder = builder.no_proxy();
+    }
+
     let client = builder.build().expect("Failed to build HTTP client");
 
     // Build default headers with auth
@@ -156,6 +181,14 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         );
         eprintln!("  {} Basic", "Auth:".dimmed());
     }
+    // Virtual host
+    if let Some(ref vhost) = config.vhost {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(vhost) {
+            default_headers.insert(reqwest::header::HOST, v);
+            eprintln!("  {} {}", "VHost:".dimmed(), vhost);
+        }
+    }
+
     for hdr in &config.custom_headers {
         if let Some((name, value)) = hdr.split_once(':') {
             if let (Ok(n), Ok(v)) = (
@@ -230,6 +263,19 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     eprintln!("{}", "───────────────────────────────────────────────────".dimmed());
     eprintln!();
 
+    // Parse tuning filter
+    let tuning: std::collections::HashSet<String> = config.tuning.as_deref()
+        .map(|t| t.split(',').map(|s| s.trim().to_lowercase()).collect())
+        .unwrap_or_default();
+    let run_phase = |phase: &str| -> bool {
+        tuning.is_empty() || tuning.contains(phase)
+    };
+
+    // Create save directory if needed
+    if let Some(ref dir) = config.save_dir {
+        std::fs::create_dir_all(dir).ok();
+    }
+
     // Phase 1: Initial probe
     eprintln!("{}", "Phase 1: Server fingerprinting...".cyan());
     let server_info = probe_server(&client, &target).await;
@@ -245,40 +291,58 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     requests_made += 1;
 
     // Phase 2: Security header analysis
-    eprintln!("{}", "Phase 2: Security header analysis...".cyan());
-    let header_findings = signatures::headers::check_headers(&client, &target).await;
-    eprintln!("  {} issues found", header_findings.len());
-    requests_made += 1;
-    all_findings.extend(header_findings);
+    if run_phase("headers") {
+        eprintln!("{}", "Phase 2: Security header analysis...".cyan());
+        let header_findings = signatures::headers::check_headers(&client, &target).await;
+        eprintln!("  {} issues found", header_findings.len());
+        requests_made += 1;
+        all_findings.extend(header_findings);
+    }
 
     // Phase 3: HTTP method testing
-    eprintln!("{}", "Phase 3: HTTP method testing...".cyan());
-    let method_findings = signatures::methods::check_methods(&client, &target).await;
-    eprintln!("  {} issues found", method_findings.len());
-    requests_made += method_findings.len().max(1);
-    all_findings.extend(method_findings);
+    if run_phase("methods") {
+        eprintln!("{}", "Phase 3: HTTP method testing...".cyan());
+        let method_findings = signatures::methods::check_methods(&client, &target).await;
+        eprintln!("  {} issues found", method_findings.len());
+        requests_made += method_findings.len().max(1);
+        all_findings.extend(method_findings);
+    }
 
     // Phase 4: Path discovery
-    eprintln!(
-        "{}",
-        format!("Phase 4: Path discovery ({} paths)...", config.max_paths).cyan()
-    );
-    let (path_findings, paths_checked) =
-        signatures::paths::check_paths(&client, &target, config.threads, config.max_paths).await;
-    eprintln!(
-        "  {} paths checked, {} findings",
-        paths_checked,
-        path_findings.len()
-    );
-    requests_made += paths_checked;
-    all_findings.extend(path_findings);
+    let mut paths_checked = 0;
+    if run_phase("paths") {
+        eprintln!(
+            "{}",
+            format!("Phase 4: Path discovery ({} paths)...", config.max_paths).cyan()
+        );
+        let (path_findings, pc) =
+            signatures::paths::check_paths(&client, &target, config.threads, config.max_paths).await;
+        paths_checked = pc;
+        eprintln!(
+            "  {} paths checked, {} findings",
+            paths_checked,
+            path_findings.len()
+        );
+        requests_made += paths_checked;
+        // Save positive responses
+        if let Some(ref dir) = config.save_dir {
+            for f in &path_findings {
+                let fname = f.id.replace('/', "_").replace(':', "_");
+                let path = std::path::Path::new(dir).join(format!("{fname}.txt"));
+                std::fs::write(&path, format!("{}\n{}\n\n{}", f.url, f.evidence, f.description)).ok();
+            }
+        }
+        all_findings.extend(path_findings);
+    }
 
     // Phase 5: Server-specific checks
-    eprintln!("{}", "Phase 5: Server-specific checks...".cyan());
-    let server_findings = signatures::server::check_server(&client, &target, &server_info).await;
-    eprintln!("  {} issues found", server_findings.len());
-    requests_made += server_findings.len().max(1);
-    all_findings.extend(server_findings);
+    if run_phase("server") {
+        eprintln!("{}", "Phase 5: Server-specific checks...".cyan());
+        let server_findings = signatures::server::check_server(&client, &target, &server_info).await;
+        eprintln!("  {} issues found", server_findings.len());
+        requests_made += server_findings.len().max(1);
+        all_findings.extend(server_findings);
+    }
 
     // Phase 6: YAML signature rules
     let rules = if config.full_scan {

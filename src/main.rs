@@ -122,6 +122,35 @@ enum Commands {
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
         full: bool,
+
+        /// Virtual host — override the Host header (e.g., internal.target.com)
+        #[arg(long)]
+        vhost: Option<String>,
+
+        /// Client TLS certificate file (PEM)
+        #[arg(long)]
+        client_cert: Option<String>,
+
+        /// Client TLS certificate key file (PEM)
+        #[arg(long)]
+        client_key: Option<String>,
+
+        /// Tuning: scan only these categories (comma-separated)
+        /// Categories: headers,paths,methods,server,rules,tls,cves,openapi,spider
+        #[arg(long)]
+        tuning: Option<String>,
+
+        /// Save positive responses to this directory
+        #[arg(long)]
+        save: Option<String>,
+
+        /// Disable DNS lookups (use IP directly)
+        #[arg(long)]
+        no_lookup: bool,
+
+        /// Target platform filter: nix, win, all (filters path checks)
+        #[arg(long, default_value = "all")]
+        platform: String,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -166,6 +195,13 @@ async fn main() {
             login_user,
             login_pass,
             login_url,
+            vhost,
+            client_cert,
+            client_key,
+            tuning,
+            save,
+            no_lookup,
+            platform,
         } => {
             print_banner();
 
@@ -191,6 +227,13 @@ async fn main() {
                 openapi_url: openapi,
                 resume,
                 full_scan: full,
+                vhost: vhost.clone(),
+                client_cert,
+                client_key,
+                tuning: tuning.clone(),
+                save_dir: save,
+                no_lookup,
+                platform,
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies
