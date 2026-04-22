@@ -121,7 +121,34 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     requests_made += server_findings.len().max(1);
     all_findings.extend(server_findings);
 
-    // Phase 6: Spider/Crawler (if enabled)
+    // Phase 6: YAML signature rules (CMS, WAF, services, info disclosure)
+    let rules = signatures::rules::load_rules(None);
+    eprintln!(
+        "{}",
+        format!("Phase 6: Signature rules ({} rules)...", rules.len()).cyan()
+    );
+    // Reuse baseline hash from path discovery phase for soft-404 detection
+    let baseline_hash = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let canary = format!("{}/cyweb-baseline-{}", target, uuid::Uuid::new_v4().as_simple());
+        match client.get(&canary).send().await {
+            Ok(r) => {
+                let body = r.text().await.unwrap_or_default();
+                let mut h = DefaultHasher::new();
+                body.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().hash(&mut h);
+                h.finish()
+            }
+            Err(_) => 0,
+        }
+    };
+    let rule_findings =
+        signatures::rules::check_rules(&client, &target, &rules, config.threads, baseline_hash).await;
+    eprintln!("  {} findings from {} rules", rule_findings.len(), rules.len());
+    requests_made += rules.len();
+    all_findings.extend(rule_findings);
+
+    // Phase 7: Spider/Crawler (if enabled)
     if config.spider_enabled {
         eprintln!(
             "{}",

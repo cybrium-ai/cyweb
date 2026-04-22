@@ -1,0 +1,256 @@
+name: cyweb-default
+version: "0.2.0"
+rules:
+  # ── WordPress ────────────────────────────────────────────────────────
+  - id: CYWEB-CMS-001
+    title: WordPress installation detected
+    severity: info
+    category: CMS Detection
+    description: WordPress is installed. Ensure it is up-to-date and hardened.
+    remediation: Keep WordPress core, themes, and plugins updated. Remove unused plugins.
+    paths: ["/wp-includes/version.php", "/wp-includes/js/jquery/jquery.min.js"]
+    match_status: [200]
+    match_body: "(?i)wordpress"
+
+  - id: CYWEB-CMS-002
+    title: WordPress xmlrpc.php enabled
+    severity: medium
+    category: CMS Security
+    description: XML-RPC is enabled, which can be used for brute-force and DDoS amplification attacks.
+    cwe: CWE-307
+    remediation: Disable XML-RPC if not needed. Use a WAF to block xmlrpc.php requests.
+    paths: ["/xmlrpc.php"]
+    match_status: [200, 405]
+    match_body: "(?i)(xml-rpc|xmlrpc)"
+
+  - id: CYWEB-CMS-003
+    title: WordPress user enumeration possible
+    severity: medium
+    category: CMS Security
+    description: WordPress author archives allow user enumeration via ?author=N.
+    cwe: CWE-200
+    remediation: Disable user enumeration via security plugin or .htaccess rules.
+    paths: ["/?author=1"]
+    match_status: [200, 301]
+    match_body: "(?i)(author|posts by)"
+
+  - id: CYWEB-CMS-004
+    title: WordPress debug.log exposed
+    severity: high
+    category: CMS Security
+    description: WordPress debug log is publicly accessible, potentially containing errors, queries, and sensitive data.
+    cwe: CWE-532
+    remediation: Remove or restrict access to debug.log. Disable WP_DEBUG_LOG in production.
+    paths: ["/wp-content/debug.log"]
+    match_status: [200]
+    match_body: "PHP"
+
+  # ── Laravel ──────────────────────────────────────────────────────────
+  - id: CYWEB-CMS-010
+    title: Laravel application detected
+    severity: info
+    category: CMS Detection
+    description: Laravel framework detected via debug page or cookie.
+    remediation: Ensure APP_DEBUG=false in production.
+    paths: ["/"]
+    match_status: [200, 500]
+    match_header: set-cookie
+    match_header_value: laravel_session
+
+  - id: CYWEB-CMS-011
+    title: Laravel debug mode enabled
+    severity: critical
+    category: CMS Security
+    description: Laravel is running with APP_DEBUG=true, exposing full stack traces, environment variables, and database credentials.
+    cwe: CWE-209
+    remediation: Set APP_DEBUG=false in .env for production.
+    paths: ["/"]
+    match_status: [500]
+    match_body: "(?i)(laravel|Whoops|stack trace|APP_KEY)"
+
+  - id: CYWEB-CMS-012
+    title: Laravel Telescope exposed
+    severity: high
+    category: CMS Security
+    description: Laravel Telescope debugging tool is publicly accessible.
+    cwe: CWE-200
+    remediation: Restrict Telescope to authenticated admin users only.
+    paths: ["/telescope"]
+    match_status: [200, 302]
+    match_body: "(?i)telescope"
+
+  # ── Django ───────────────────────────────────────────────────────────
+  - id: CYWEB-CMS-020
+    title: Django admin interface
+    severity: low
+    category: CMS Detection
+    description: Django admin panel found.
+    remediation: Restrict admin access by IP or VPN. Use strong passwords and 2FA.
+    paths: ["/admin/"]
+    match_status: [200]
+    match_body: "(?i)(django|csrfmiddlewaretoken)"
+
+  - id: CYWEB-CMS-021
+    title: Django debug mode enabled
+    severity: critical
+    category: CMS Security
+    description: Django is running with DEBUG=True, exposing settings, SQL queries, and file paths.
+    cwe: CWE-209
+    remediation: Set DEBUG=False in production settings.
+    paths: ["/nonexistent-cyweb-test"]
+    match_status: [404]
+    match_body: "(?i)(You're seeing this error because you have DEBUG = True)"
+
+  # ── WAF Detection ───────────────────────────────────────────────────
+  - id: CYWEB-WAF-001
+    title: Cloudflare WAF detected
+    severity: info
+    category: WAF Detection
+    description: Target is behind Cloudflare. Some scans may be blocked or rate-limited.
+    remediation: N/A — informational finding.
+    paths: ["/"]
+    match_status: [200, 403]
+    match_header: server
+    match_header_value: cloudflare
+
+  - id: CYWEB-WAF-002
+    title: AWS WAF / CloudFront detected
+    severity: info
+    category: WAF Detection
+    description: Target is behind AWS CloudFront or WAF.
+    remediation: N/A — informational finding.
+    paths: ["/"]
+    match_status: [200, 403]
+    match_header: x-amz-cf-id
+
+  - id: CYWEB-WAF-003
+    title: Akamai CDN/WAF detected
+    severity: info
+    category: WAF Detection
+    description: Target is behind Akamai CDN/WAF.
+    remediation: N/A — informational finding.
+    paths: ["/"]
+    match_status: [200, 403]
+    match_header: x-akamai-request-id
+
+  # ── Exposed Services ────────────────────────────────────────────────
+  - id: CYWEB-SVC-001
+    title: Kubernetes dashboard exposed
+    severity: critical
+    category: Exposed Services
+    description: Kubernetes dashboard is publicly accessible. This can lead to full cluster compromise.
+    cwe: CWE-284
+    remediation: Restrict Kubernetes dashboard access to internal networks only.
+    paths: ["/api/v1/namespaces/kubernetes-dashboard"]
+    match_status: [200]
+    match_body: "kubernetes"
+
+  - id: CYWEB-SVC-002
+    title: Docker API exposed
+    severity: critical
+    category: Exposed Services
+    description: Docker remote API is accessible without authentication.
+    cwe: CWE-284
+    remediation: Disable Docker remote API or require TLS client certificates.
+    paths: ["/v1.24/containers/json", "/containers/json"]
+    match_status: [200]
+    match_body: "\\["
+
+  - id: CYWEB-SVC-003
+    title: Elasticsearch accessible
+    severity: high
+    category: Exposed Services
+    description: Elasticsearch is publicly accessible without authentication.
+    cwe: CWE-284
+    remediation: Enable X-Pack security or restrict access to internal networks.
+    paths: ["/"]
+    match_status: [200]
+    match_body: "cluster_name"
+
+  - id: CYWEB-SVC-004
+    title: Jenkins dashboard accessible
+    severity: high
+    category: Exposed Services
+    description: Jenkins CI/CD dashboard is publicly accessible.
+    cwe: CWE-284
+    remediation: Require authentication for Jenkins. Restrict network access.
+    paths: ["/login", "/"]
+    match_status: [200]
+    match_body: "(?i)(jenkins|hudson)"
+
+  - id: CYWEB-SVC-005
+    title: Grafana login page accessible
+    severity: low
+    category: Exposed Services
+    description: Grafana monitoring dashboard is publicly accessible.
+    remediation: Restrict Grafana access to internal networks or require SSO.
+    paths: ["/login"]
+    match_status: [200]
+    match_body: "(?i)grafana"
+
+  # ── Information Disclosure ──────────────────────────────────────────
+  - id: CYWEB-INF-001
+    title: PHP info page exposed
+    severity: high
+    category: Information Disclosure
+    description: phpinfo() output is publicly accessible, revealing PHP version, modules, environment variables, and server paths.
+    cwe: CWE-200
+    remediation: Remove phpinfo() pages from production servers.
+    paths: ["/phpinfo.php", "/info.php", "/php_info.php"]
+    match_status: [200]
+    match_body: "(?i)(phpinfo|PHP Version)"
+
+  - id: CYWEB-INF-002
+    title: Directory listing enabled
+    severity: medium
+    category: Information Disclosure
+    description: Web server directory listing is enabled, exposing file names and structure.
+    cwe: CWE-548
+    remediation: Disable directory listing in web server configuration.
+    paths: ["/images/", "/assets/", "/uploads/", "/static/", "/files/"]
+    match_status: [200]
+    match_body: "(?i)(index of|parent directory|<pre>)"
+
+  - id: CYWEB-INF-003
+    title: Composer dependencies exposed
+    severity: medium
+    category: Information Disclosure
+    description: PHP Composer lock file is accessible, revealing all dependencies and versions.
+    cwe: CWE-200
+    remediation: Block access to composer.lock and composer.json via web server config.
+    paths: ["/composer.lock", "/composer.json"]
+    match_status: [200]
+    match_body: "(?i)(packages|require)"
+
+  - id: CYWEB-INF-004
+    title: Node.js package.json exposed
+    severity: low
+    category: Information Disclosure
+    description: package.json reveals project dependencies and versions.
+    cwe: CWE-200
+    remediation: Block access to package.json via web server configuration.
+    paths: ["/package.json"]
+    match_status: [200]
+    match_body: "dependencies"
+
+  - id: CYWEB-INF-005
+    title: AWS credentials file exposed
+    severity: critical
+    category: Information Disclosure
+    description: AWS credentials file is publicly accessible, potentially containing access keys and secrets.
+    cwe: CWE-798
+    remediation: Immediately rotate exposed credentials. Block access to credential files.
+    paths: ["/.aws/credentials", "/aws/credentials"]
+    match_status: [200]
+    match_body: "(?i)(aws_access_key_id|aws_secret_access_key)"
+
+  - id: CYWEB-INF-006
+    title: SSH private key exposed
+    severity: critical
+    category: Information Disclosure
+    description: An SSH private key is publicly accessible.
+    cwe: CWE-798
+    remediation: Immediately revoke the exposed key. Block access to key files.
+    paths: ["/id_rsa", "/.ssh/id_rsa", "/id_ed25519"]
+    match_status: [200]
+    match_body: "(?i)(PRIVATE KEY)"

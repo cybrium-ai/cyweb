@@ -3,6 +3,7 @@
 pub mod headers;
 pub mod methods;
 pub mod paths;
+pub mod rules;
 pub mod server;
 
 /// A single finding from a scan.
