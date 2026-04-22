@@ -254,3 +254,887 @@ rules:
     paths: ["/id_rsa", "/.ssh/id_rsa", "/id_ed25519"]
     match_status: [200]
     match_body: "(?i)(PRIVATE KEY)"
+
+  # ── Joomla ──────────────────────────────────────────────────────────
+  - id: CYWEB-CMS-030
+    title: Joomla installation detected
+    severity: info
+    category: CMS Detection
+    description: Joomla CMS detected via administrator login or manifest.
+    remediation: Keep Joomla core and extensions updated.
+    paths: ["/administrator/", "/administrator/index.php"]
+    match_status: [200]
+    match_body: "(?i)(joomla|com_login)"
+
+  - id: CYWEB-CMS-031
+    title: Joomla configuration backup exposed
+    severity: critical
+    category: CMS Security
+    description: Joomla configuration backup file contains database credentials.
+    cwe: CWE-200
+    remediation: Remove configuration.php.bak from the webroot.
+    paths: ["/configuration.php.bak", "/configuration.php~", "/configuration.php.old"]
+    match_status: [200]
+    match_body: "(?i)(JConfig|\\$db|\\$password)"
+
+  # ── Drupal ──────────────────────────────────────────────────────────
+  - id: CYWEB-CMS-040
+    title: Drupal installation detected
+    severity: info
+    category: CMS Detection
+    description: Drupal CMS detected.
+    remediation: Keep Drupal core and modules updated.
+    paths: ["/core/install.php", "/core/CHANGELOG.txt"]
+    match_status: [200]
+    match_body: "(?i)drupal"
+
+  - id: CYWEB-CMS-041
+    title: Drupal update.php accessible
+    severity: high
+    category: CMS Security
+    description: Drupal update.php is accessible, allowing unauthorized database updates.
+    cwe: CWE-284
+    remediation: Restrict access to update.php or remove it after updates.
+    paths: ["/update.php"]
+    match_status: [200]
+    match_body: "(?i)(drupal|update)"
+
+  # ── Ruby on Rails ───────────────────────────────────────────────────
+  - id: CYWEB-CMS-050
+    title: Rails application detected
+    severity: info
+    category: CMS Detection
+    description: Ruby on Rails application detected.
+    remediation: Ensure RAILS_ENV=production.
+    paths: ["/"]
+    match_status: [200]
+    match_header: x-request-id
+
+  - id: CYWEB-CMS-051
+    title: Rails debug info exposed
+    severity: critical
+    category: CMS Security
+    description: Rails is running in development mode exposing full stack traces.
+    cwe: CWE-209
+    remediation: Set RAILS_ENV=production.
+    paths: ["/rails/info/properties"]
+    match_status: [200]
+    match_body: "(?i)(rails|ruby|environment)"
+
+  # ── Next.js / Nuxt ─────────────────────────────────────────────────
+  - id: CYWEB-CMS-060
+    title: Next.js application detected
+    severity: info
+    category: CMS Detection
+    description: Next.js framework detected via build manifest.
+    remediation: N/A — informational.
+    paths: ["/_next/data/", "/_next/static/"]
+    match_status: [200, 301, 404]
+    match_header: x-powered-by
+    match_header_value: "Next.js"
+
+  - id: CYWEB-CMS-061
+    title: Next.js source maps exposed
+    severity: medium
+    category: CMS Security
+    description: Next.js source maps are accessible, revealing original source code.
+    cwe: CWE-540
+    remediation: "Disable source maps in production (productionBrowserSourceMaps: false)."
+    paths: ["/_next/static/chunks/main.js.map", "/_next/static/chunks/webpack.js.map"]
+    match_status: [200]
+    match_body: "(?i)(sourceMappingURL|webpack)"
+
+  # ── Spring Boot ─────────────────────────────────────────────────────
+  - id: CYWEB-SVC-010
+    title: Spring Boot info endpoint
+    severity: medium
+    category: Exposed Services
+    description: Spring Boot info endpoint reveals application metadata.
+    cwe: CWE-200
+    remediation: Restrict actuator endpoints to authenticated admin users.
+    paths: ["/actuator/info"]
+    match_status: [200]
+    match_body: "{"
+
+  - id: CYWEB-SVC-011
+    title: Spring Boot beans endpoint
+    severity: high
+    category: Exposed Services
+    description: Spring Boot beans endpoint reveals all application beans and dependencies.
+    cwe: CWE-200
+    remediation: Disable or restrict /actuator/beans endpoint.
+    paths: ["/actuator/beans"]
+    match_status: [200]
+    match_body: "beans"
+
+  - id: CYWEB-SVC-012
+    title: Spring Boot configprops endpoint
+    severity: critical
+    category: Exposed Services
+    description: Configuration properties endpoint may expose sensitive settings.
+    cwe: CWE-200
+    remediation: Disable /actuator/configprops in production.
+    paths: ["/actuator/configprops"]
+    match_status: [200]
+    match_body: "contexts"
+
+  - id: CYWEB-SVC-013
+    title: Spring Boot heapdump accessible
+    severity: critical
+    category: Exposed Services
+    description: JVM heap dump is downloadable, containing in-memory secrets and credentials.
+    cwe: CWE-200
+    remediation: Disable /actuator/heapdump immediately.
+    paths: ["/actuator/heapdump"]
+    match_status: [200]
+    not_match_body: "(?i)(html|<!DOCTYPE)"
+
+  # ── Monitoring/Observability ────────────────────────────────────────
+  - id: CYWEB-SVC-020
+    title: Prometheus metrics exposed
+    severity: medium
+    category: Exposed Services
+    description: Prometheus metrics endpoint is publicly accessible.
+    cwe: CWE-200
+    remediation: Restrict /metrics to internal networks.
+    paths: ["/metrics", "/prometheus/metrics"]
+    match_status: [200]
+    match_body: "(?i)(process_cpu|http_request|go_gc)"
+
+  - id: CYWEB-SVC-021
+    title: Kibana dashboard accessible
+    severity: high
+    category: Exposed Services
+    description: Kibana dashboard is publicly accessible without authentication.
+    cwe: CWE-284
+    remediation: Enable Kibana authentication or restrict network access.
+    paths: ["/app/kibana", "/api/status"]
+    match_status: [200]
+    match_body: "(?i)kibana"
+
+  - id: CYWEB-SVC-022
+    title: Redis Commander exposed
+    severity: critical
+    category: Exposed Services
+    description: Redis Commander web UI is publicly accessible.
+    cwe: CWE-284
+    remediation: Remove Redis Commander from production or restrict access.
+    paths: ["/"]
+    match_status: [200]
+    match_body: "(?i)redis commander"
+
+  - id: CYWEB-SVC-023
+    title: RabbitMQ management UI
+    severity: high
+    category: Exposed Services
+    description: RabbitMQ management interface is accessible.
+    cwe: CWE-284
+    remediation: Restrict RabbitMQ management to internal networks.
+    paths: ["/api/overview", "/"]
+    match_status: [200]
+    match_body: "(?i)rabbitmq"
+
+  - id: CYWEB-SVC-024
+    title: MinIO console accessible
+    severity: high
+    category: Exposed Services
+    description: MinIO object storage console is publicly accessible.
+    cwe: CWE-284
+    remediation: Restrict MinIO console access.
+    paths: ["/minio/login", "/login"]
+    match_status: [200]
+    match_body: "(?i)minio"
+
+  # ── Secrets & Credentials ───────────────────────────────────────────
+  - id: CYWEB-SEC-001
+    title: Firebase credentials exposed
+    severity: critical
+    category: Secrets
+    description: Firebase configuration with API key is publicly accessible.
+    cwe: CWE-798
+    remediation: Remove Firebase config from public files. Use environment variables.
+    paths: ["/firebase-config.json", "/firebase.json", "/__/firebase/init.json"]
+    match_status: [200]
+    match_body: "(?i)(apiKey|authDomain|projectId)"
+
+  - id: CYWEB-SEC-002
+    title: Docker Compose file exposed
+    severity: high
+    category: Secrets
+    description: docker-compose.yml is accessible and may contain service passwords.
+    cwe: CWE-200
+    remediation: Block access to docker-compose files via web server config.
+    paths: ["/docker-compose.yml", "/docker-compose.yaml", "/docker-compose.prod.yml"]
+    match_status: [200]
+    match_body: "(?i)(services:|image:|ports:)"
+
+  - id: CYWEB-SEC-003
+    title: Kubernetes manifests exposed
+    severity: high
+    category: Secrets
+    description: Kubernetes deployment manifests accessible, may contain secrets.
+    cwe: CWE-200
+    remediation: Block access to Kubernetes manifests.
+    paths: ["/k8s/deployment.yaml", "/kubernetes/", "/deploy.yaml"]
+    match_status: [200]
+    match_body: "(?i)(apiVersion|kind: Deployment|kind: Secret)"
+
+  - id: CYWEB-SEC-004
+    title: Terraform state file exposed
+    severity: critical
+    category: Secrets
+    description: Terraform state file contains infrastructure secrets and resource IDs.
+    cwe: CWE-200
+    remediation: Never serve Terraform state publicly. Use remote backends.
+    paths: ["/terraform.tfstate", "/.terraform/terraform.tfstate"]
+    match_status: [200]
+    match_body: "(?i)(terraform_version|resources)"
+
+  - id: CYWEB-SEC-005
+    title: GitHub token in client-side code
+    severity: critical
+    category: Secrets
+    description: A GitHub token pattern found in accessible JavaScript.
+    cwe: CWE-798
+    remediation: Rotate the exposed token immediately. Never embed tokens in client code.
+    paths: ["/main.js", "/app.js", "/bundle.js"]
+    match_status: [200]
+    match_body: "(ghp_[A-Za-z0-9]{36}|github_pat_)"
+
+  - id: CYWEB-SEC-006
+    title: Stripe secret key in client code
+    severity: critical
+    category: Secrets
+    description: Stripe secret key found in accessible file. This allows full API access.
+    cwe: CWE-798
+    remediation: Rotate the Stripe key immediately. Use server-side only.
+    paths: ["/main.js", "/app.js", "/config.js", "/.env"]
+    match_status: [200]
+    match_body: "sk_live_[A-Za-z0-9]{24,}"
+
+  # ── API Security ────────────────────────────────────────────────────
+  - id: CYWEB-API-001
+    title: GraphQL introspection enabled
+    severity: medium
+    category: API Security
+    description: GraphQL introspection is enabled, revealing the entire API schema.
+    cwe: CWE-200
+    remediation: Disable introspection in production.
+    paths: ["/graphql"]
+    match_status: [200]
+    method: POST
+
+  - id: CYWEB-API-002
+    title: REST API returns verbose errors
+    severity: medium
+    category: API Security
+    description: API error responses contain stack traces or internal details.
+    cwe: CWE-209
+    remediation: Return generic error messages in production.
+    paths: ["/api/v1/nonexistent-cyweb", "/api/nonexistent-cyweb"]
+    match_status: [404, 500]
+    match_body: "(?i)(stack trace|traceback|exception|internal server)"
+
+  - id: CYWEB-API-003
+    title: API documentation with try-it-out enabled
+    severity: low
+    category: API Security
+    description: Interactive API documentation allows executing requests.
+    remediation: Disable try-it-out in production Swagger UI.
+    paths: ["/swagger-ui/", "/api/docs/"]
+    match_status: [200]
+    match_body: "(?i)(try it out|swagger-ui)"
+
+  # ── Cloud & Infrastructure ──────────────────────────────────────────
+  - id: CYWEB-CLD-001
+    title: AWS S3 bucket listing
+    severity: high
+    category: Cloud Security
+    description: S3 bucket allows public listing of objects.
+    cwe: CWE-284
+    remediation: Disable public access on S3 buckets.
+    paths: ["/"]
+    match_status: [200]
+    match_body: "(?i)(ListBucketResult|<Bucket)"
+
+  - id: CYWEB-CLD-002
+    title: Azure Blob storage listing
+    severity: high
+    category: Cloud Security
+    description: Azure Blob container allows public listing.
+    cwe: CWE-284
+    remediation: Disable public access on Azure containers.
+    paths: ["/"]
+    match_status: [200]
+    match_body: "(?i)(EnumerationResults|BlobPrefix)"
+
+  - id: CYWEB-CLD-003
+    title: GCP metadata API accessible
+    severity: critical
+    category: Cloud Security
+    description: Google Cloud metadata API is accessible via SSRF.
+    cwe: CWE-918
+    remediation: Block metadata API access from application layer.
+    paths: ["/computeMetadata/v1/"]
+    match_status: [200]
+    match_body: "(?i)(instance|project)"
+
+  # ── Backup & Archive ────────────────────────────────────────────────
+  - id: CYWEB-BAK-001
+    title: Database backup accessible
+    severity: critical
+    category: Backup Files
+    description: Database backup file is publicly downloadable.
+    cwe: CWE-530
+    remediation: Remove backup files from the webroot.
+    paths: ["/database.sql", "/data.sql", "/mysql.sql", "/postgres.sql", "/db_backup.sql"]
+    match_status: [200]
+    match_body: "(?i)(CREATE TABLE|INSERT INTO|mysqldump|pg_dump)"
+
+  - id: CYWEB-BAK-002
+    title: Application backup archive
+    severity: critical
+    category: Backup Files
+    description: Application backup archive is downloadable.
+    cwe: CWE-530
+    remediation: Remove backup archives from publicly accessible directories.
+    paths: ["/www.tar.gz", "/www.zip", "/html.tar.gz", "/app.tar.gz", "/site.zip", "/web.zip"]
+    match_status: [200]
+    not_match_body: "(?i)(<!DOCTYPE|<html)"
+
+  - id: CYWEB-BAK-003
+    title: Log files accessible
+    severity: high
+    category: Backup Files
+    description: Application log files are publicly accessible and may contain sensitive data.
+    cwe: CWE-532
+    remediation: Move log files outside the webroot or block access.
+    paths: ["/logs/error.log", "/log/error.log", "/error.log", "/access.log", "/debug.log", "/app.log"]
+    match_status: [200]
+    match_body: "(?i)(error|exception|warning|\\[\\d{4})"
+
+  # ── Email & SMTP ───────────────────────────────────────────────────
+  - id: CYWEB-EML-001
+    title: Webmail interface accessible
+    severity: low
+    category: Exposed Services
+    description: Webmail interface (Roundcube/Horde) is publicly accessible.
+    remediation: Restrict webmail to VPN or specific IPs.
+    paths: ["/mail/", "/webmail/", "/roundcube/"]
+    match_status: [200]
+    match_body: "(?i)(roundcube|horde|squirrelmail|webmail)"
+
+  # ── Version Control Extended ────────────────────────────────────────
+  - id: CYWEB-VCS-001
+    title: Git objects accessible
+    severity: critical
+    category: Version Control
+    description: Git objects directory is accessible. Full source code can be reconstructed.
+    cwe: CWE-538
+    remediation: Block access to .git directory in web server config.
+    paths: ["/.git/objects/", "/.git/refs/"]
+    match_status: [200, 403]
+    match_body: "(?i)(tree|index of)"
+
+  - id: CYWEB-VCS-002
+    title: Git logs exposed
+    severity: high
+    category: Version Control
+    description: Git log information accessible, revealing commit history and authors.
+    cwe: CWE-538
+    remediation: Block .git access entirely.
+    paths: ["/.git/logs/HEAD"]
+    match_status: [200]
+    match_body: "(?i)(commit|clone|checkout)"
+
+  # ── Security Misconfiguration ───────────────────────────────────────
+  - id: CYWEB-MIS-001
+    title: Default credentials page detected
+    severity: high
+    category: Security Misconfiguration
+    description: A page suggests default credentials may be in use.
+    cwe: CWE-798
+    remediation: Change all default passwords immediately.
+    paths: ["/"]
+    match_status: [200]
+    match_body: "(?i)(default password|admin/admin|root/root|test/test)"
+
+  - id: CYWEB-MIS-002
+    title: Exposed .htaccess file
+    severity: medium
+    category: Security Misconfiguration
+    description: Apache .htaccess file is readable, revealing rewrite rules and configs.
+    cwe: CWE-200
+    remediation: Block direct access to .htaccess files.
+    paths: ["/.htaccess", "/.htpasswd"]
+    match_status: [200]
+    match_body: "(?i)(RewriteRule|AuthType|Deny from)"
+
+  - id: CYWEB-MIS-003
+    title: Web.config exposed
+    severity: medium
+    category: Security Misconfiguration
+    description: IIS web.config is readable, potentially exposing connection strings.
+    cwe: CWE-200
+    remediation: Block access to web.config.
+    paths: ["/web.config"]
+    match_status: [200]
+    match_body: "(?i)(configuration|connectionString|appSettings)"
+
+  - id: CYWEB-MIS-004
+    title: CGI-BIN directory accessible
+    severity: medium
+    category: Security Misconfiguration
+    description: CGI-BIN directory is accessible and may contain executable scripts.
+    cwe: CWE-284
+    remediation: Remove unused CGI scripts and restrict the directory.
+    paths: ["/cgi-bin/"]
+    match_status: [200, 403]
+    match_body: "(?i)(index of|cgi)"
+
+  - id: CYWEB-MIS-005
+    title: WS_FTP log file exposed
+    severity: medium
+    category: Security Misconfiguration
+    description: WS_FTP transfer log reveals file transfer history and paths.
+    cwe: CWE-532
+    remediation: Remove FTP log files from the webroot.
+    paths: ["/WS_FTP.LOG", "/ws_ftp.log"]
+    match_status: [200]
+    match_body: "(?i)(connected|transfer)"
+
+  # ── CI/CD Exposure ─────────────────────────────────────────────────
+  - id: CYWEB-CIC-001
+    title: GitHub Actions workflow exposed
+    severity: low
+    category: CI/CD
+    description: GitHub Actions workflow files reveal build and deployment processes.
+    cwe: CWE-200
+    remediation: Block access to .github directory.
+    paths: ["/.github/workflows/", "/.github/"]
+    match_status: [200]
+    match_body: "(?i)(workflow|actions|jobs)"
+
+  - id: CYWEB-CIC-002
+    title: GitLab CI config exposed
+    severity: medium
+    category: CI/CD
+    description: GitLab CI configuration reveals pipeline secrets and deploy processes.
+    cwe: CWE-200
+    remediation: Block access to .gitlab-ci.yml.
+    paths: ["/.gitlab-ci.yml"]
+    match_status: [200]
+    match_body: "(?i)(stages:|script:|deploy)"
+
+  - id: CYWEB-CIC-003
+    title: Jenkinsfile exposed
+    severity: medium
+    category: CI/CD
+    description: Jenkins pipeline configuration is accessible.
+    cwe: CWE-200
+    remediation: Block access to Jenkinsfile.
+    paths: ["/Jenkinsfile"]
+    match_status: [200]
+    match_body: "(?i)(pipeline|stage|agent)"
+
+  - id: CYWEB-CIC-004
+    title: CircleCI config exposed
+    severity: medium
+    category: CI/CD
+    description: CircleCI configuration reveals build process.
+    cwe: CWE-200
+    remediation: Block access to .circleci directory.
+    paths: ["/.circleci/config.yml"]
+    match_status: [200]
+    match_body: "(?i)(version:|jobs:|workflows:)"
+
+  # ── Dependency & Package ────────────────────────────────────────────
+  - id: CYWEB-DEP-001
+    title: Yarn lock file exposed
+    severity: low
+    category: Information Disclosure
+    description: Yarn lock file reveals exact dependency versions.
+    cwe: CWE-200
+    remediation: Block access to yarn.lock.
+    paths: ["/yarn.lock"]
+    match_status: [200]
+    match_body: "(?i)(resolved|integrity)"
+
+  - id: CYWEB-DEP-002
+    title: Gemfile exposed
+    severity: low
+    category: Information Disclosure
+    description: Ruby Gemfile reveals application dependencies.
+    cwe: CWE-200
+    remediation: Block access to Gemfile.
+    paths: ["/Gemfile", "/Gemfile.lock"]
+    match_status: [200]
+    match_body: "(?i)(gem |source)"
+
+  - id: CYWEB-DEP-003
+    title: requirements.txt exposed
+    severity: low
+    category: Information Disclosure
+    description: Python requirements file reveals dependencies and versions.
+    cwe: CWE-200
+    remediation: Block access to requirements.txt.
+    paths: ["/requirements.txt", "/requirements/base.txt"]
+    match_status: [200]
+    match_body: "(?i)(==|>=|django|flask|requests)"
+
+  - id: CYWEB-DEP-004
+    title: go.mod exposed
+    severity: low
+    category: Information Disclosure
+    description: Go module file reveals dependencies.
+    cwe: CWE-200
+    remediation: Block access to go.mod and go.sum.
+    paths: ["/go.mod", "/go.sum"]
+    match_status: [200]
+    match_body: "(?i)(module |require )"
+
+  - id: CYWEB-DEP-005
+    title: Cargo.toml exposed
+    severity: low
+    category: Information Disclosure
+    description: Rust project manifest reveals dependencies.
+    cwe: CWE-200
+    remediation: Block access to Cargo files.
+    paths: ["/Cargo.toml", "/Cargo.lock"]
+    match_status: [200]
+    match_body: "(?i)(\\[package\\]|\\[dependencies\\])"
+
+  # ── WAF Extended ───────────────────────────────────────────────────
+  - id: CYWEB-WAF-004
+    title: Imperva/Incapsula WAF detected
+    severity: info
+    category: WAF Detection
+    description: Target is behind Imperva/Incapsula WAF.
+    remediation: N/A — informational.
+    paths: ["/"]
+    match_status: [200, 403]
+    match_header: x-iinfo
+
+  - id: CYWEB-WAF-005
+    title: Sucuri WAF detected
+    severity: info
+    category: WAF Detection
+    description: Target is behind Sucuri WAF.
+    remediation: N/A — informational.
+    paths: ["/"]
+    match_status: [200, 403]
+    match_header: x-sucuri-id
+
+  - id: CYWEB-WAF-006
+    title: F5 BIG-IP detected
+    severity: info
+    category: WAF Detection
+    description: Target is behind F5 BIG-IP load balancer/WAF.
+    remediation: N/A — informational.
+    paths: ["/"]
+    match_status: [200]
+    match_header: set-cookie
+    match_header_value: "BIGipServer"
+
+  # ── Common Vulnerabilities ──────────────────────────────────────────
+  - id: CYWEB-VLN-001
+    title: Open redirect via URL parameter
+    severity: medium
+    category: Vulnerability
+    description: Application may be vulnerable to open redirect attacks.
+    cwe: CWE-601
+    remediation: Validate and whitelist redirect URLs server-side.
+    paths: ["/redirect?url=https://evil.com", "/login?next=https://evil.com", "/goto?url=https://evil.com", "/redir?url=https://evil.com"]
+    match_status: [301, 302]
+    match_header: location
+    match_header_value: "evil.com"
+
+  - id: CYWEB-VLN-002
+    title: CRLF injection in headers
+    severity: high
+    category: Vulnerability
+    description: Application may be vulnerable to CRLF injection (HTTP response splitting).
+    cwe: CWE-93
+    remediation: Sanitize user input in HTTP headers and redirects.
+    paths: ["/search?q=%0d%0aInjected-Header:%20true"]
+    match_status: [200, 301, 302]
+    match_header: injected-header
+
+  - id: CYWEB-VLN-003
+    title: Path traversal possible
+    severity: high
+    category: Vulnerability
+    description: Application may be vulnerable to path traversal.
+    cwe: CWE-22
+    remediation: Validate file paths and use allowlists for file access.
+    paths: ["/download?file=../../../etc/passwd", "/file?path=....//....//etc/passwd"]
+    match_status: [200]
+    match_body: "root:"
+
+  - id: CYWEB-VLN-004
+    title: Server-Side Request Forgery (SSRF) indicator
+    severity: high
+    category: Vulnerability
+    description: Application accepts URL parameters that may enable SSRF attacks.
+    cwe: CWE-918
+    remediation: Validate and restrict outbound requests to allowlisted hosts.
+    paths: ["/fetch?url=http://169.254.169.254/latest/meta-data/", "/proxy?url=http://127.0.0.1:8080"]
+    match_status: [200]
+    match_body: "(?i)(ami-id|instance-id|localhost)"
+
+  # ── Error Handling ──────────────────────────────────────────────────
+  - id: CYWEB-ERR-001
+    title: Stack trace in 500 error
+    severity: high
+    category: Error Handling
+    description: Server returns stack traces in error responses.
+    cwe: CWE-209
+    remediation: Configure custom error pages. Disable debug mode in production.
+    paths: ["/cyweb-trigger-error?test=1%27"]
+    match_status: [500]
+    match_body: "(?i)(stack trace|traceback|exception|at \\w+\\.\\w+\\()"
+
+  - id: CYWEB-ERR-002
+    title: Database error message exposed
+    severity: high
+    category: Error Handling
+    description: Database error messages reveal schema details and query structure.
+    cwe: CWE-209
+    remediation: Never expose raw database errors to users.
+    paths: ["/search?q=%27"]
+    match_status: [500, 200]
+    match_body: "(?i)(SQL syntax|mysql_|pg_query|ORA-\\d|sqlite3\\.)"
+
+  # ── Authentication Weaknesses ───────────────────────────────────────
+  - id: CYWEB-ATH-001
+    title: Password reset token in URL
+    severity: medium
+    category: Authentication
+    description: Password reset flow uses tokens in URL which can leak via Referer header.
+    cwe: CWE-598
+    remediation: Use POST requests for password reset tokens.
+    paths: ["/reset-password", "/forgot-password", "/password/reset"]
+    match_status: [200]
+    match_body: "(?i)(reset.*password|new.*password|confirm.*password)"
+
+  - id: CYWEB-ATH-002
+    title: Registration page accessible
+    severity: info
+    category: Authentication
+    description: User registration is open.
+    remediation: Consider if open registration is intended.
+    paths: ["/register", "/signup", "/create-account"]
+    match_status: [200]
+    match_body: "(?i)(register|sign.up|create.*account)"
+
+  - id: CYWEB-ATH-003
+    title: Multi-factor authentication not enforced
+    severity: info
+    category: Authentication
+    description: Login page exists without visible MFA enforcement.
+    remediation: Implement MFA for all user accounts.
+    paths: ["/login", "/signin"]
+    match_status: [200]
+    not_match_body: "(?i)(two.factor|2fa|mfa|authenticator|verification code)"
+
+  # ── Crypto & Sensitive Data ─────────────────────────────────────────
+  - id: CYWEB-CRY-001
+    title: Private key file accessible
+    severity: critical
+    category: Cryptographic Issues
+    description: A private key file is publicly accessible.
+    cwe: CWE-321
+    remediation: Remove private keys from the webroot immediately. Rotate affected keys.
+    paths: ["/server.key", "/private.key", "/ssl.key", "/cert.key", "/tls.key"]
+    match_status: [200]
+    match_body: "(?i)(PRIVATE KEY)"
+
+  - id: CYWEB-CRY-002
+    title: Certificate file accessible
+    severity: low
+    category: Cryptographic Issues
+    description: A certificate file is publicly accessible.
+    remediation: While not secret, certificates should not be served directly.
+    paths: ["/server.crt", "/server.pem", "/cert.pem", "/fullchain.pem"]
+    match_status: [200]
+    match_body: "(?i)(CERTIFICATE)"
+
+  # ── Container & DevOps ─────────────────────────────────────────────
+  - id: CYWEB-OPS-001
+    title: Dockerfile exposed
+    severity: medium
+    category: DevOps
+    description: Dockerfile reveals build process and base image details.
+    cwe: CWE-200
+    remediation: Block access to Dockerfiles from the web.
+    paths: ["/Dockerfile", "/Dockerfile.prod", "/docker/Dockerfile"]
+    match_status: [200]
+    match_body: "(?i)(FROM |RUN |COPY |EXPOSE )"
+
+  - id: CYWEB-OPS-002
+    title: Makefile exposed
+    severity: low
+    category: DevOps
+    description: Makefile reveals build commands and deployment targets.
+    cwe: CWE-200
+    remediation: Block access to Makefiles.
+    paths: ["/Makefile"]
+    match_status: [200]
+    match_body: "(?i)(\\$\\(|make |target|install:)"
+
+  - id: CYWEB-OPS-003
+    title: Procfile exposed
+    severity: low
+    category: DevOps
+    description: Heroku Procfile reveals application processes.
+    cwe: CWE-200
+    remediation: Block access to Procfile.
+    paths: ["/Procfile"]
+    match_status: [200]
+    match_body: "(?i)(web:|worker:)"
+
+  # ── Third-party Integrations ────────────────────────────────────────
+  - id: CYWEB-INT-001
+    title: Sentry DSN exposed
+    severity: medium
+    category: Secrets
+    description: Sentry DSN (Data Source Name) is exposed in client-side code.
+    cwe: CWE-200
+    remediation: Use server-side Sentry SDKs or restrict DSN to known origins.
+    paths: ["/main.js", "/app.js"]
+    match_status: [200]
+    match_body: "https://[a-f0-9]+@[a-z]+\\.ingest\\.sentry\\.io/"
+
+  - id: CYWEB-INT-002
+    title: Google Maps API key exposed
+    severity: low
+    category: Secrets
+    description: Google Maps API key found. Ensure it has domain restrictions.
+    cwe: CWE-200
+    remediation: Restrict the API key to specific domains in Google Cloud Console.
+    paths: ["/main.js", "/app.js", "/index.html"]
+    match_status: [200]
+    match_body: "AIzaSy[A-Za-z0-9_-]{33}"
+
+  - id: CYWEB-INT-003
+    title: Slack webhook URL exposed
+    severity: high
+    category: Secrets
+    description: Slack incoming webhook URL found. Can be used to send messages to your Slack.
+    cwe: CWE-798
+    remediation: Rotate the webhook URL. Move to server-side environment variables.
+    paths: ["/main.js", "/app.js", "/config.js"]
+    match_status: [200]
+    match_body: "hooks\\.slack\\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/"
+
+  # ── Network Services ───────────────────────────────────────────────
+  - id: CYWEB-NET-001
+    title: Portainer management UI
+    severity: high
+    category: Exposed Services
+    description: Portainer Docker management UI is publicly accessible.
+    cwe: CWE-284
+    remediation: Restrict Portainer to internal networks.
+    paths: ["/#!/auth", "/api/status"]
+    match_status: [200]
+    match_body: "(?i)portainer"
+
+  - id: CYWEB-NET-002
+    title: Traefik dashboard accessible
+    severity: medium
+    category: Exposed Services
+    description: Traefik reverse proxy dashboard is publicly accessible.
+    cwe: CWE-200
+    remediation: Restrict dashboard to internal networks. Enable authentication.
+    paths: ["/dashboard/", "/api/rawdata"]
+    match_status: [200]
+    match_body: "(?i)traefik"
+
+  - id: CYWEB-NET-003
+    title: phpPgAdmin exposed
+    severity: high
+    category: Exposed Services
+    description: phpPgAdmin PostgreSQL management tool is publicly accessible.
+    cwe: CWE-284
+    remediation: Restrict phpPgAdmin access to internal networks.
+    paths: ["/phppgadmin/", "/pgadmin/"]
+    match_status: [200]
+    match_body: "(?i)(phppgadmin|pgadmin)"
+
+  - id: CYWEB-NET-004
+    title: Solr admin panel accessible
+    severity: high
+    category: Exposed Services
+    description: Apache Solr admin interface is publicly accessible.
+    cwe: CWE-284
+    remediation: Restrict Solr admin to internal networks.
+    paths: ["/solr/", "/solr/admin/"]
+    match_status: [200]
+    match_body: "(?i)solr"
+
+  - id: CYWEB-NET-005
+    title: MongoDB Express accessible
+    severity: critical
+    category: Exposed Services
+    description: MongoDB Express web UI is publicly accessible without authentication.
+    cwe: CWE-284
+    remediation: Remove mongo-express from production. Restrict access.
+    paths: ["/"]
+    match_status: [200]
+    match_body: "(?i)mongo express"
+
+  # ── Miscellaneous ──────────────────────────────────────────────────
+  - id: CYWEB-MIS-010
+    title: Error page reveals framework version
+    severity: low
+    category: Information Disclosure
+    description: Error page reveals the framework and version in use.
+    cwe: CWE-200
+    remediation: Configure custom error pages.
+    paths: ["/nonexistent-cyweb-probe"]
+    match_status: [404]
+    match_body: "(?i)(express|django|flask|laravel|spring|rails|asp\\.net|version)"
+
+  - id: CYWEB-MIS-011
+    title: WSDL file exposed
+    severity: low
+    category: Information Disclosure
+    description: WSDL file reveals SOAP API endpoints and operations.
+    cwe: CWE-200
+    remediation: Restrict access to WSDL files.
+    paths: ["/service.wsdl", "/ws?wsdl", "/api?wsdl"]
+    match_status: [200]
+    match_body: "(?i)(wsdl|definitions|portType)"
+
+  - id: CYWEB-MIS-012
+    title: Webpack stats file exposed
+    severity: medium
+    category: Information Disclosure
+    description: Webpack stats JSON reveals all module paths and bundle structure.
+    cwe: CWE-540
+    remediation: Remove stats.json from production builds.
+    paths: ["/stats.json", "/webpack-stats.json"]
+    match_status: [200]
+    match_body: "(?i)(chunks|modules|assets)"
+
+  - id: CYWEB-MIS-013
+    title: Node.js heapdump accessible
+    severity: critical
+    category: Information Disclosure
+    description: Node.js heap snapshot is downloadable, containing secrets from memory.
+    cwe: CWE-200
+    remediation: Remove heapdump files from webroot.
+    paths: ["/heapdump", "/heapdump.heapsnapshot"]
+    match_status: [200]
+    not_match_body: "(?i)(<!DOCTYPE|<html)"
+
+  - id: CYWEB-MIS-014
+    title: IDE project files exposed
+    severity: low
+    category: Information Disclosure
+    description: IDE project files reveal project structure and configuration.
+    cwe: CWE-200
+    remediation: Block access to IDE files (.idea, .vscode).
+    paths: ["/.idea/workspace.xml", "/.vscode/settings.json", "/.project"]
+    match_status: [200]
+    match_body: "(?i)(component|setting|project)"

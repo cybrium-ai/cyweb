@@ -55,12 +55,25 @@ const EMBEDDED_RULES: &str = include_str!("../../rules/default.yaml");
 pub fn load_rules(extra_path: Option<&str>) -> Vec<Rule> {
     let mut all_rules = Vec::new();
 
-    // Load embedded rules
-    if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(EMBEDDED_RULES) {
-        all_rules.extend(ruleset.rules);
+    // Prefer ~/.cyweb/default.yaml (updated via `cyweb update-rules`) over embedded
+    let home_rules = dirs::home_dir()
+        .map(|h| h.join(".cyweb/default.yaml"))
+        .filter(|p| p.exists());
+
+    if let Some(ref path) = home_rules {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(&content) {
+                all_rules.extend(ruleset.rules);
+            }
+        }
+    } else {
+        // Fall back to embedded rules
+        if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(EMBEDDED_RULES) {
+            all_rules.extend(ruleset.rules);
+        }
     }
 
-    // Load external rules
+    // Load external rules (additive)
     if let Some(path) = extra_path {
         if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(&content) {

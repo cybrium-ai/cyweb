@@ -96,6 +96,8 @@ enum Commands {
         #[arg(long)]
         rules: Option<String>,
     },
+    /// Update signature rules from GitHub
+    UpdateRules,
     /// Show version info
     Version,
 }
@@ -195,6 +197,38 @@ async fn main() {
 
             let exit_code = if result.findings.is_empty() { 0 } else { 1 };
             process::exit(exit_code);
+        }
+        Commands::UpdateRules => {
+            eprintln!("Fetching latest rules from GitHub...");
+            let url = "https://raw.githubusercontent.com/cybrium-ai/cyweb/main/rules/default.yaml";
+            match reqwest::get(url).await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let body = resp.text().await.unwrap_or_default();
+                        let rules_dir = dirs::home_dir()
+                            .map(|h| h.join(".cyweb"))
+                            .unwrap_or_else(|| std::path::PathBuf::from(".cyweb"));
+                        std::fs::create_dir_all(&rules_dir).ok();
+                        let path = rules_dir.join("default.yaml");
+                        std::fs::write(&path, &body).expect("Failed to write rules file");
+                        // Count rules
+                        let count = body.matches("- id:").count();
+                        eprintln!(
+                            "{} {} rules saved to {}",
+                            "Updated!".green().bold(),
+                            count,
+                            path.display()
+                        );
+                    } else {
+                        eprintln!("{} HTTP {}", "Failed:".red(), resp.status());
+                        process::exit(2);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} {}", "Failed:".red(), e);
+                    process::exit(2);
+                }
+            }
         }
         Commands::Version => {
             println!(
