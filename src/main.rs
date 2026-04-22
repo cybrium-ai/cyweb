@@ -112,6 +112,8 @@ enum Commands {
     },
     /// Update signature rules from GitHub
     UpdateRules,
+    /// Check for updates and self-update the binary
+    Update,
     /// Show version info
     Version,
 }
@@ -277,11 +279,151 @@ async fn main() {
                 }
             }
         }
+        Commands::Update => {
+            let current = env!("CARGO_PKG_VERSION");
+            eprintln!("Current version: {}", current.yellow());
+            eprintln!("Checking for updates...");
+
+            // Fetch latest release from GitHub API
+            let client = reqwest::Client::builder()
+                .user_agent(format!("cyweb/{current}"))
+                .build()
+                .unwrap();
+
+            match client.get("https://api.github.com/repos/cybrium-ai/cyweb/releases/latest")
+                .header("Accept", "application/vnd.github+json")
+                .send().await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let data: serde_json::Value = resp.json().await.unwrap_or_default();
+                    let latest = data["tag_name"].as_str().unwrap_or("unknown").trim_start_matches('v');
+
+                    if latest == current {
+                        eprintln!("{}", "Already up to date!".green().bold());
+                        return;
+                    }
+
+                    eprintln!("New version available: {} -> {}", current.dimmed(), latest.green().bold());
+
+                    // Determine platform binary name
+                    let binary_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+                        "cyweb-darwin-arm64"
+                    } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
+                        "cyweb-darwin-amd64"
+                    } else if cfg!(target_os = "linux") && cfg!(target_arch = "aarch64") {
+                        "cyweb-linux-arm64"
+                    } else {
+                        "cyweb-linux-amd64"
+                    };
+
+                    // Find download URL
+                    let assets = data["assets"].as_array();
+                    let download_url = assets.and_then(|a| {
+                        a.iter().find(|asset| {
+                            asset["name"].as_str().map_or(false, |n| n == binary_name)
+                        }).and_then(|asset| asset["browser_download_url"].as_str())
+                    });
+
+                    let url = match download_url {
+                        Some(u) => u,
+                        None => {
+                            eprintln!("{} No binary found for your platform ({})", "Error:".red(), binary_name);
+                            process::exit(2);
+                        }
+                    };
+
+                    eprintln!("Downloading {}...", binary_name);
+                    match client.get(url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            let bytes = resp.bytes().await.unwrap_or_default();
+                            if bytes.is_empty() {
+                                eprintln!("{} Download returned empty", "Error:".red());
+                                process::exit(2);
+                            }
+
+                            // Get current executable path
+                            let exe_path = std::env::current_exe().expect("Cannot determine executable path");
+                            let backup = exe_path.with_extension("old");
+
+                            // Backup current → replace → make executable
+                            if let Err(e) = std::fs::rename(&exe_path, &backup) {
+                                eprintln!("{} Cannot backup current binary: {}", "Error:".red(), e);
+                                eprintln!("Try: sudo cyweb update");
+                                process::exit(2);
+                            }
+
+                            if let Err(e) = std::fs::write(&exe_path, &bytes) {
+                                // Restore backup
+                                std::fs::rename(&backup, &exe_path).ok();
+                                eprintln!("{} Cannot write new binary: {}", "Error:".red(), e);
+                                process::exit(2);
+                            }
+
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755)).ok();
+                            }
+
+                            // Remove backup
+                            std::fs::remove_file(&backup).ok();
+
+                            eprintln!("{} Updated to v{}", "Success!".green().bold(), latest);
+
+                            // Also update rules
+                            eprintln!("Updating rules...");
+                            if let Ok(r) = client.get("https://raw.githubusercontent.com/cybrium-ai/cyweb/main/rules/default.yaml").send().await {
+                                if r.status().is_success() {
+                                    let body = r.text().await.unwrap_or_default();
+                                    let rules_dir = dirs::home_dir()
+                                        .map(|h| h.join(".cyweb"))
+                                        .unwrap_or_else(|| std::path::PathBuf::from(".cyweb"));
+                                    std::fs::create_dir_all(&rules_dir).ok();
+                                    std::fs::write(rules_dir.join("default.yaml"), &body).ok();
+                                    let count = body.matches("- id:").count();
+                                    eprintln!("  {} rules updated", count);
+                                }
+                            }
+                        }
+                        _ => {
+                            eprintln!("{} Download failed", "Error:".red());
+                            process::exit(2);
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("{} Cannot reach GitHub API", "Error:".red());
+                    process::exit(2);
+                }
+            }
+        }
         Commands::Version => {
-            println!(
-                "cyweb {} — Cybrium AI Web Scanner\nhttps://github.com/cybrium-ai/cyweb",
-                env!("CARGO_PKG_VERSION")
-            );
+            let current = env!("CARGO_PKG_VERSION");
+            println!("cyweb {} — Cybrium AI Web Scanner", current);
+            println!("https://github.com/cybrium-ai/cyweb");
+
+            // Check for updates in background
+            let client = reqwest::Client::builder()
+                .user_agent(format!("cyweb/{current}"))
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+                .unwrap();
+            if let Ok(resp) = client.get("https://api.github.com/repos/cybrium-ai/cyweb/releases/latest")
+                .header("Accept", "application/vnd.github+json")
+                .send().await
+            {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    let latest = data["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+                    if !latest.is_empty() && latest != current {
+                        println!(
+                            "\n{} v{} available (run: {})",
+                            "Update:".yellow().bold(),
+                            latest.green(),
+                            "cyweb update".cyan()
+                        );
+                    }
+                }
+            }
         }
     }
 }
