@@ -240,19 +240,24 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let port = parsed.as_ref().and_then(|u| u.port_or_known_default()).unwrap_or(443);
     let is_ssl = target.starts_with("https");
 
-    // Resolve IP
-    let target_ip = {
+    // Resolve IPs
+    let target_ips: Vec<String> = {
         use std::net::ToSocketAddrs;
         format!("{}:{}", hostname, port)
             .to_socket_addrs()
-            .ok()
-            .and_then(|mut addrs| addrs.next())
-            .map(|a| a.ip().to_string())
-            .unwrap_or_else(|| "unresolved".into())
+            .map(|addrs| addrs.map(|a| a.ip().to_string()).collect())
+            .unwrap_or_else(|_| vec!["unresolved".into()])
     };
 
     eprintln!("{}", "───────────────────────────────────────────────────".dimmed());
-    eprintln!("  {} {}", "Target IP:".white().bold(), target_ip);
+    if target_ips.len() == 1 {
+        eprintln!("  {} {}", "Target IP:".white().bold(), target_ips[0]);
+    } else {
+        eprintln!("  {} {} ({})", "Target IPs:".white().bold(), target_ips[0], target_ips.len());
+        for ip in &target_ips[1..] {
+            eprintln!("              {}", ip);
+        }
+    }
     eprintln!("  {} {}", "Hostname:".white().bold(), hostname);
     eprintln!("  {} {}", "Port:".white().bold(), port);
     if is_ssl {
