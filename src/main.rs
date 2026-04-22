@@ -11,6 +11,8 @@ mod crawler;
 mod openapi;
 mod checkpoint;
 mod form_login;
+mod evasion;
+mod mutate;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -151,6 +153,16 @@ enum Commands {
         /// Target platform filter: nix, win, all (filters path checks)
         #[arg(long, default_value = "all")]
         platform: String,
+
+        /// Evasion technique (1-9): 1=URI encoding, 2=dir self-ref, 3=null byte,
+        /// 4=random prepend, 5=fake param, 7=random case, 8=windows sep, 9=all
+        #[arg(long, short = 'e')]
+        evasion: Option<u8>,
+
+        /// Mutate mode (1-6): 1=backup extensions, 2=password files,
+        /// 3=Apache ~user, 4=cgiwrap, 5=common dirs, 6=all
+        #[arg(long, short = 'm')]
+        mutate: Option<u8>,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -202,6 +214,8 @@ async fn main() {
             save,
             no_lookup,
             platform,
+            evasion,
+            mutate,
         } => {
             print_banner();
 
@@ -234,6 +248,8 @@ async fn main() {
                 save_dir: save,
                 no_lookup,
                 platform,
+                evasion_mode: evasion.unwrap_or(0),
+                mutate_mode: mutate.unwrap_or(0),
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies

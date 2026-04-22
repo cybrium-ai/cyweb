@@ -35,6 +35,8 @@ pub struct ScanConfig {
     pub save_dir: Option<String>,
     pub no_lookup: bool,
     pub platform: String,
+    pub evasion_mode: u8,
+    pub mutate_mode: u8,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -402,7 +404,31 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
     all_findings.extend(cve_findings);
 
-    // Phase 10: OpenAPI/Swagger scanning
+    // Phase 10: Mutate/bruteforce
+    if config.mutate_mode > 0 && run_phase("mutate") {
+        eprintln!(
+            "{}",
+            format!("Phase 10: Mutate — {} ...", crate::mutate::describe(config.mutate_mode)).cyan()
+        );
+        let mutate_findings = crate::mutate::run_mutate(
+            &client, &target, config.mutate_mode, config.threads, baseline_hash,
+        ).await;
+        eprintln!("  {} findings", mutate_findings.len());
+        requests_made += mutate_findings.len().max(1);
+        all_findings.extend(mutate_findings);
+    }
+
+    // Evasion info (applied at request level, not a separate phase)
+    if config.evasion_mode > 0 {
+        eprintln!(
+            "  {} Evasion mode {}: {}",
+            "Note:".dimmed(),
+            config.evasion_mode,
+            crate::evasion::describe(config.evasion_mode),
+        );
+    }
+
+    // Phase 11: OpenAPI/Swagger scanning
     if let Some(ref spec_url) = config.openapi_url {
         eprintln!("{}", format!("Phase 10: OpenAPI spec scanning ({spec_url})...").cyan());
         let api_findings = crate::openapi::scan_openapi(&client, spec_url, &target).await;
