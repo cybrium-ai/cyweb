@@ -3,7 +3,9 @@
 use crate::signatures::{self, Finding, Severity};
 use colored::Colorize;
 use reqwest::Client;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 
 #[derive(Debug, Clone)]
 pub struct ScanConfig {
@@ -15,6 +17,14 @@ pub struct ScanConfig {
     pub user_agent: String,
     pub spider_enabled: bool,
     pub spider_depth: usize,
+    pub auth_bearer: Option<String>,
+    pub auth_cookie: Option<String>,
+    pub auth_basic: Option<String>,
+    pub custom_headers: Vec<String>,
+    pub proxy: Option<String>,
+    pub rate_limit: u32,
+    pub tls_check: bool,
+    pub rules_file: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -26,6 +36,8 @@ pub struct ScanResult {
     pub findings: Vec<Finding>,
     pub summary: ScanSummary,
     pub server_info: ServerInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_info: Option<TlsInfo>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -47,14 +59,53 @@ pub struct ServerInfo {
     pub technologies: Vec<String>,
     pub status_code: u16,
     pub redirect_url: Option<String>,
-    pub ip_address: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TlsInfo {
+    pub subject: String,
+    pub issuer: String,
+    pub valid_from: String,
+    pub valid_to: String,
+    pub days_remaining: i64,
+    pub san: Vec<String>,
+    pub protocol: String,
+}
+
+/// Rate limiter — wraps a semaphore with a timed release.
+pub struct RateLimiter {
+    semaphore: Arc<Semaphore>,
+    _interval_ms: u64,
+}
+
+impl RateLimiter {
+    pub fn new(rps: u32) -> Option<Self> {
+        if rps == 0 {
+            return None;
+        }
+        let interval_ms = 1000 / rps as u64;
+        Some(Self {
+            semaphore: Arc::new(Semaphore::new(rps as usize)),
+            _interval_ms: interval_ms,
+        })
+    }
+
+    pub async fn acquire(&self) {
+        let permit = self.semaphore.clone().acquire_owned().await.unwrap();
+        let interval = self._interval_ms;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(interval)).await;
+            drop(permit);
+        });
+    }
 }
 
 pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let start = Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
 
-    let client = Client::builder()
+    // Build HTTP client with auth + proxy
+    let mut builder = Client::builder()
         .timeout(Duration::from_secs(config.timeout_secs))
         .connect_timeout(Duration::from_secs(config.timeout_secs))
         .redirect(if config.follow_redirects {
@@ -65,16 +116,87 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         .user_agent(&config.user_agent)
         .danger_accept_invalid_certs(true)
         .cookie_store(true)
-        .pool_max_idle_per_host(config.threads)
-        .build()
-        .expect("Failed to build HTTP client");
+        .pool_max_idle_per_host(config.threads);
+
+    // Proxy
+    if let Some(ref proxy_url) = config.proxy {
+        if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
+            builder = builder.proxy(proxy);
+            eprintln!("  {} {}", "Proxy:".dimmed(), proxy_url.yellow());
+        }
+    }
+
+    let client = builder.build().expect("Failed to build HTTP client");
+
+    // Build default headers with auth
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    if let Some(ref token) = config.auth_bearer {
+        default_headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        eprintln!("  {} Bearer token", "Auth:".dimmed());
+    }
+    if let Some(ref cookie) = config.auth_cookie {
+        default_headers.insert(
+            reqwest::header::COOKIE,
+            cookie.parse().unwrap(),
+        );
+        eprintln!("  {} Cookie", "Auth:".dimmed());
+    }
+    if let Some(ref basic) = config.auth_basic {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(basic);
+        default_headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Basic {encoded}").parse().unwrap(),
+        );
+        eprintln!("  {} Basic", "Auth:".dimmed());
+    }
+    for hdr in &config.custom_headers {
+        if let Some((name, value)) = hdr.split_once(':') {
+            if let (Ok(n), Ok(v)) = (
+                reqwest::header::HeaderName::from_bytes(name.trim().as_bytes()),
+                reqwest::header::HeaderValue::from_str(value.trim()),
+            ) {
+                default_headers.insert(n, v);
+            }
+        }
+    }
+
+    // Build an authed client if we have headers
+    let client = if default_headers.is_empty() {
+        client
+    } else {
+        Client::builder()
+            .timeout(Duration::from_secs(config.timeout_secs))
+            .connect_timeout(Duration::from_secs(config.timeout_secs))
+            .redirect(if config.follow_redirects {
+                reqwest::redirect::Policy::limited(10)
+            } else {
+                reqwest::redirect::Policy::none()
+            })
+            .user_agent(&config.user_agent)
+            .danger_accept_invalid_certs(true)
+            .cookie_store(true)
+            .pool_max_idle_per_host(config.threads)
+            .default_headers(default_headers)
+            .build()
+            .expect("Failed to build authenticated HTTP client")
+    };
+
+    // Rate limiter
+    let rate_limiter = RateLimiter::new(config.rate_limit);
+    if config.rate_limit > 0 {
+        eprintln!("  {} {}/s", "Rate limit:".dimmed(), config.rate_limit);
+    }
 
     // Normalize target URL
     let target = normalize_url(&config.target);
     let mut all_findings: Vec<Finding> = Vec::new();
     let mut requests_made: usize = 0;
 
-    // Phase 1: Initial probe — get server info
+    // Phase 1: Initial probe
     eprintln!("{}", "Phase 1: Server fingerprinting...".cyan());
     let server_info = probe_server(&client, &target).await;
     if let Some(ref s) = server_info.server {
@@ -82,6 +204,9 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
     if let Some(ref p) = server_info.powered_by {
         eprintln!("  Powered-By: {}", p.yellow());
+    }
+    if !server_info.technologies.is_empty() {
+        eprintln!("  Stack: {}", server_info.technologies.join(", ").dimmed());
     }
     requests_made += 1;
 
@@ -121,38 +246,39 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     requests_made += server_findings.len().max(1);
     all_findings.extend(server_findings);
 
-    // Phase 6: YAML signature rules (CMS, WAF, services, info disclosure)
-    let rules = signatures::rules::load_rules(None);
+    // Phase 6: YAML signature rules
+    let rules = signatures::rules::load_rules(config.rules_file.as_deref());
     eprintln!(
         "{}",
         format!("Phase 6: Signature rules ({} rules)...", rules.len()).cyan()
     );
-    // Reuse baseline hash from path discovery phase for soft-404 detection
-    let baseline_hash = {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let canary = format!("{}/cyweb-baseline-{}", target, uuid::Uuid::new_v4().as_simple());
-        match client.get(&canary).send().await {
-            Ok(r) => {
-                let body = r.text().await.unwrap_or_default();
-                let mut h = DefaultHasher::new();
-                body.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().hash(&mut h);
-                h.finish()
-            }
-            Err(_) => 0,
-        }
-    };
+    let baseline_hash = compute_baseline(&client, &target).await;
     let rule_findings =
         signatures::rules::check_rules(&client, &target, &rules, config.threads, baseline_hash).await;
     eprintln!("  {} findings from {} rules", rule_findings.len(), rules.len());
     requests_made += rules.len();
     all_findings.extend(rule_findings);
 
-    // Phase 7: Spider/Crawler (if enabled)
+    // Phase 7: TLS analysis
+    let mut tls_info = None;
+    if config.tls_check && target.starts_with("https") {
+        eprintln!("{}", "Phase 7: TLS certificate analysis...".cyan());
+        let (tls, tls_findings) = check_tls(&target).await;
+        if let Some(ref t) = tls {
+            eprintln!("  Issuer: {}", t.issuer.dimmed());
+            eprintln!("  Expires: {} ({} days)", t.valid_to.dimmed(), t.days_remaining);
+        }
+        eprintln!("  {} issues found", tls_findings.len());
+        all_findings.extend(tls_findings);
+        tls_info = tls;
+        requests_made += 1;
+    }
+
+    // Phase 8: Spider/Crawler (if enabled)
     if config.spider_enabled {
         eprintln!(
             "{}",
-            format!("Phase 6: Spider (depth={})...", config.spider_depth).cyan()
+            format!("Phase 8: Spider (depth={})...", config.spider_depth).cyan()
         );
         let (spider_findings, spider_requests) =
             crate::crawler::crawl(&client, &target, config.spider_depth, config.threads).await;
@@ -190,6 +316,22 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         findings: all_findings,
         summary,
         server_info,
+        tls_info,
+    }
+}
+
+async fn compute_baseline(client: &Client, target: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let canary = format!("{}/cyweb-baseline-{}", target, uuid::Uuid::new_v4().as_simple());
+    match client.get(&canary).send().await {
+        Ok(r) => {
+            let body = r.text().await.unwrap_or_default();
+            let mut h = DefaultHasher::new();
+            body.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().hash(&mut h);
+            h.finish()
+        }
+        Err(_) => 0,
     }
 }
 
@@ -198,21 +340,11 @@ async fn probe_server(client: &Client, target: &str) -> ServerInfo {
         Ok(resp) => {
             let headers = resp.headers();
             ServerInfo {
-                server: headers
-                    .get("server")
-                    .and_then(|v| v.to_str().ok())
-                    .map(String::from),
-                powered_by: headers
-                    .get("x-powered-by")
-                    .and_then(|v| v.to_str().ok())
-                    .map(String::from),
+                server: headers.get("server").and_then(|v| v.to_str().ok()).map(String::from),
+                powered_by: headers.get("x-powered-by").and_then(|v| v.to_str().ok()).map(String::from),
                 technologies: detect_technologies(headers),
                 status_code: resp.status().as_u16(),
-                redirect_url: headers
-                    .get("location")
-                    .and_then(|v| v.to_str().ok())
-                    .map(String::from),
-                ip_address: None,
+                redirect_url: headers.get("location").and_then(|v| v.to_str().ok()).map(String::from),
             }
         }
         Err(_) => ServerInfo::default(),
@@ -237,10 +369,160 @@ fn detect_technologies(headers: &reqwest::header::HeaderMap) -> Vec<String> {
         if p.contains("next.js") { techs.push("Next.js".into()); }
     }
     if headers.get("x-drupal-cache").is_some() { techs.push("Drupal".into()); }
-    if headers.get("x-generator").and_then(|v| v.to_str().ok()).map_or(false, |v| v.contains("WordPress")) {
+    if headers.get("x-generator").and_then(|v| v.to_str().ok()).is_some_and(|v| v.contains("WordPress")) {
         techs.push("WordPress".into());
     }
     techs
+}
+
+/// TLS certificate analysis.
+async fn check_tls(target: &str) -> (Option<TlsInfo>, Vec<Finding>) {
+    use std::process::Command;
+    let mut findings = Vec::new();
+
+    let host = target
+        .replace("https://", "")
+        .replace("http://", "")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+
+    if host.is_empty() {
+        return (None, findings);
+    }
+
+    // Use openssl s_client to get cert info
+    let output = Command::new("openssl")
+        .args(["s_client", "-connect", &format!("{host}:443"), "-servername", &host])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    let output = match output {
+        Ok(o) => o,
+        Err(_) => return (None, findings),
+    };
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stdout}\n{stderr}");
+
+    // Parse cert details with openssl x509
+    let cert_output = Command::new("openssl")
+        .args(["x509", "-noout", "-subject", "-issuer", "-dates", "-ext", "subjectAltName"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    // Simpler approach: extract from s_client output
+    let mut subject = String::new();
+    let mut issuer = String::new();
+    let mut valid_from = String::new();
+    let mut valid_to = String::new();
+    let mut protocol = String::new();
+    let san: Vec<String> = Vec::new();
+
+    for line in combined.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("subject=") || trimmed.starts_with("subject =") {
+            subject = trimmed.splitn(2, '=').nth(1).unwrap_or("").trim().to_string();
+        }
+        if trimmed.starts_with("issuer=") || trimmed.starts_with("issuer =") {
+            issuer = trimmed.splitn(2, '=').nth(1).unwrap_or("").trim().to_string();
+        }
+        if trimmed.contains("Protocol") && trimmed.contains("TLS") {
+            protocol = trimmed.split(':').last().unwrap_or("").trim().to_string();
+        }
+        if trimmed.starts_with("notBefore=") || trimmed.starts_with("Not Before:") {
+            valid_from = trimmed.splitn(2, '=').nth(1).or(trimmed.splitn(2, ':').nth(1)).unwrap_or("").trim().to_string();
+        }
+        if trimmed.starts_with("notAfter=") || trimmed.starts_with("Not After :") {
+            valid_to = trimmed.splitn(2, '=').nth(1).or(trimmed.splitn(2, ':').nth(1)).unwrap_or("").trim().to_string();
+        }
+    }
+
+    // Parse expiry for days remaining
+    let days_remaining = parse_days_remaining(&valid_to);
+
+    // Findings
+    if days_remaining >= 0 && days_remaining <= 30 {
+        findings.push(Finding {
+            id: "CYWEB-TLS-001".into(),
+            title: format!("TLS certificate expires in {} days", days_remaining),
+            severity: if days_remaining <= 7 { Severity::Critical } else { Severity::High },
+            category: "TLS/SSL".into(),
+            description: format!("The TLS certificate expires on {valid_to}. Renew it before expiry to avoid service disruption."),
+            evidence: format!("Expires: {valid_to} ({days_remaining} days remaining)"),
+            url: target.into(),
+            cwe: Some("CWE-295".into()),
+            remediation: "Renew the TLS certificate before expiry.".into(),
+        });
+    }
+
+    if days_remaining < 0 && days_remaining != i64::MAX {
+        findings.push(Finding {
+            id: "CYWEB-TLS-002".into(),
+            title: "TLS certificate has expired".into(),
+            severity: Severity::Critical,
+            category: "TLS/SSL".into(),
+            description: format!("The TLS certificate expired on {valid_to}."),
+            evidence: format!("Expired: {valid_to}"),
+            url: target.into(),
+            cwe: Some("CWE-295".into()),
+            remediation: "Replace the expired TLS certificate immediately.".into(),
+        });
+    }
+
+    if protocol.contains("TLSv1.0") || protocol.contains("TLSv1.1") || protocol.contains("SSLv") {
+        findings.push(Finding {
+            id: "CYWEB-TLS-003".into(),
+            title: format!("Weak TLS protocol: {protocol}"),
+            severity: Severity::High,
+            category: "TLS/SSL".into(),
+            description: "The server supports deprecated TLS protocols vulnerable to known attacks.".into(),
+            evidence: format!("Protocol: {protocol}"),
+            url: target.into(),
+            cwe: Some("CWE-326".into()),
+            remediation: "Disable TLS 1.0, TLS 1.1, and SSLv3. Use TLS 1.2+ only.".into(),
+        });
+    }
+
+    let tls = TlsInfo {
+        subject,
+        issuer,
+        valid_from,
+        valid_to,
+        days_remaining,
+        san,
+        protocol,
+    };
+
+    (Some(tls), findings)
+}
+
+fn parse_days_remaining(date_str: &str) -> i64 {
+    let trimmed = date_str.trim();
+    if trimmed.is_empty() {
+        return i64::MAX; // Unknown — don't flag
+    }
+    let formats = [
+        "%b %d %H:%M:%S %Y GMT",
+        "%b %e %H:%M:%S %Y GMT",
+        "%b %d %H:%M:%S %Y",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d %H:%M:%S",
+        "%b %d %T %Y %Z",
+    ];
+    for fmt in &formats {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(trimmed, fmt) {
+            let expiry = dt.and_utc();
+            return (expiry - chrono::Utc::now()).num_days();
+        }
+    }
+    i64::MAX // Unknown — don't flag
 }
 
 fn normalize_url(url: &str) -> String {

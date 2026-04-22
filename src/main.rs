@@ -63,6 +63,38 @@ enum Commands {
         /// Spider max depth
         #[arg(long, default_value = "3")]
         spider_depth: usize,
+
+        /// Bearer token for authenticated scanning
+        #[arg(long)]
+        auth_bearer: Option<String>,
+
+        /// Cookie header value (e.g., "session=abc123")
+        #[arg(long)]
+        auth_cookie: Option<String>,
+
+        /// Basic auth (user:password)
+        #[arg(long)]
+        auth_basic: Option<String>,
+
+        /// Custom header (repeatable, format: "Name: Value")
+        #[arg(long = "header", short = 'H')]
+        headers: Vec<String>,
+
+        /// HTTP/SOCKS5 proxy URL (e.g., socks5://127.0.0.1:1080)
+        #[arg(long)]
+        proxy: Option<String>,
+
+        /// Max requests per second (0 = unlimited)
+        #[arg(long, default_value = "0")]
+        rate_limit: u32,
+
+        /// Enable TLS certificate analysis
+        #[arg(long)]
+        tls_check: bool,
+
+        /// Extra YAML rules file
+        #[arg(long)]
+        rules: Option<String>,
     },
     /// Show version info
     Version,
@@ -89,6 +121,14 @@ async fn main() {
             file,
             spider,
             spider_depth,
+            auth_bearer,
+            auth_cookie,
+            auth_basic,
+            headers,
+            proxy,
+            rate_limit,
+            tls_check,
+            rules,
         } => {
             print_banner();
 
@@ -103,6 +143,14 @@ async fn main() {
                 }),
                 spider_enabled: spider,
                 spider_depth,
+                auth_bearer,
+                auth_cookie,
+                auth_basic,
+                custom_headers: headers,
+                proxy,
+                rate_limit,
+                tls_check,
+                rules_file: rules,
             };
 
             eprintln!(
