@@ -9,10 +9,16 @@ pub fn print_text(result: &ScanResult) {
     eprintln!();
     eprintln!("{}", "═══════════════════════════════════════════════════".dimmed());
     eprintln!("  {} {}", "SCAN COMPLETE".green().bold(), result.target.white());
+    let duration_display = if result.duration_ms > 1000 {
+        format!("{:.1}s", result.duration_ms as f64 / 1000.0)
+    } else {
+        format!("{}ms", result.duration_ms)
+    };
     eprintln!(
-        "  Duration: {}ms | Requests: {} | Paths checked: {}",
-        result.duration_ms, result.summary.requests_made, result.summary.paths_checked
+        "  Duration: {} | Requests: {} | Paths: {}",
+        duration_display.yellow(), result.summary.requests_made, result.summary.paths_checked
     );
+    eprintln!("  End Time: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S (%Z)").to_string().dimmed());
     eprintln!("{}", "═══════════════════════════════════════════════════".dimmed());
 
     if result.findings.is_empty() {

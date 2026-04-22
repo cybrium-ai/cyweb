@@ -199,6 +199,37 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let mut all_findings: Vec<Finding> = Vec::new();
     let mut requests_made: usize = 0;
 
+    // ── Target info block ────────────────────────────────────────────
+    let parsed = url::Url::parse(&target).ok();
+    let hostname = parsed.as_ref().and_then(|u| u.host_str()).unwrap_or("unknown");
+    let port = parsed.as_ref().and_then(|u| u.port_or_known_default()).unwrap_or(443);
+    let is_ssl = target.starts_with("https");
+
+    // Resolve IP
+    let target_ip = {
+        use std::net::ToSocketAddrs;
+        format!("{}:{}", hostname, port)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .map(|a| a.ip().to_string())
+            .unwrap_or_else(|| "unresolved".into())
+    };
+
+    eprintln!("{}", "───────────────────────────────────────────────────".dimmed());
+    eprintln!("  {} {}", "Target IP:".white().bold(), target_ip);
+    eprintln!("  {} {}", "Hostname:".white().bold(), hostname);
+    eprintln!("  {} {}", "Port:".white().bold(), port);
+    if is_ssl {
+        eprintln!("  {} {}", "SSL:".white().bold(), "yes".green());
+    }
+    if config.proxy.is_some() {
+        eprintln!("  {} {}", "Proxy:".white().bold(), config.proxy.as_deref().unwrap_or(""));
+    }
+    eprintln!("  {} {}", "Start Time:".white().bold(), chrono::Local::now().format("%Y-%m-%d %H:%M:%S (%Z)"));
+    eprintln!("{}", "───────────────────────────────────────────────────".dimmed());
+    eprintln!();
+
     // Phase 1: Initial probe
     eprintln!("{}", "Phase 1: Server fingerprinting...".cyan());
     let server_info = probe_server(&client, &target).await;
