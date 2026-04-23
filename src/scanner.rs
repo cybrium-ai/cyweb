@@ -39,6 +39,7 @@ pub struct ScanConfig {
     pub mutate_mode: u8,
     pub fuzz_enabled: bool,
     pub payloads_dir: Option<String>,
+    pub templates_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -467,6 +468,22 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         ).await;
         eprintln!("  {} injection vulnerabilities found", fuzz_findings.len());
         all_findings.extend(fuzz_findings);
+    }
+
+    // Phase 13: Advanced templates (multi-step, extractors, Nuclei-compatible)
+    if run_phase("templates") {
+        let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
+        if !tpls.is_empty() {
+            eprintln!(
+                "{}",
+                format!("Phase 13: Template engine ({} templates)...", tpls.len()).cyan()
+            );
+            let tpl_findings = crate::templates::run_templates(
+                &client, &target, &tpls, config.threads,
+            ).await;
+            eprintln!("  {} findings from templates", tpl_findings.len());
+            all_findings.extend(tpl_findings);
+        }
     }
 
     // Deduplicate findings

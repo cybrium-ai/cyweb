@@ -14,6 +14,8 @@ mod form_login;
 mod evasion;
 mod mutate;
 mod fuzz;
+mod templates;
+mod nuclei_convert;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -173,11 +175,24 @@ enum Commands {
         /// Custom payloads directory for active fuzzing (YAML files)
         #[arg(long)]
         payloads: Option<String>,
+
+        /// Template directory for advanced multi-step scanning (Nuclei-compatible)
+        #[arg(long)]
+        templates: Option<String>,
     },
     /// Update signature rules from GitHub
     UpdateRules,
     /// Check for updates and self-update the binary
     Update,
+    /// Convert Nuclei templates to cyweb format
+    ConvertNuclei {
+        /// Input directory containing Nuclei templates
+        #[arg(long, short = 'i')]
+        input: String,
+        /// Output directory for converted cyweb templates (default: ~/.cyweb/templates/)
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+    },
     /// Show version info
     Version,
 }
@@ -228,6 +243,7 @@ async fn main() {
             mutate,
             fuzz,
             payloads,
+            templates,
         } => {
             print_banner();
 
@@ -264,6 +280,7 @@ async fn main() {
                 mutate_mode: mutate.unwrap_or(0),
                 fuzz_enabled: fuzz,
                 payloads_dir: payloads,
+                templates_dir: templates,
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies
@@ -514,6 +531,28 @@ async fn main() {
                     eprintln!("{} Cannot reach GitHub API", "Error:".red());
                     process::exit(2);
                 }
+            }
+        }
+        Commands::ConvertNuclei { input, output } => {
+            let out = output.unwrap_or_else(|| {
+                dirs::home_dir()
+                    .map(|h| h.join(".cyweb/templates").to_string_lossy().to_string())
+                    .unwrap_or_else(|| "templates-out".to_string())
+            });
+            eprintln!("{}", format!("Converting Nuclei templates: {} -> {}", input, out).cyan());
+            let result = nuclei_convert::convert_directory(&input, &out);
+            eprintln!("{}", format!(
+                "Done: {} total, {} converted, {} skipped, {} errors",
+                result.total, result.converted, result.skipped, result.errors
+            ).green());
+            if !result.error_details.is_empty() && result.error_details.len() <= 10 {
+                for detail in &result.error_details {
+                    eprintln!("  {}", detail.dimmed());
+                }
+            }
+            if result.converted > 0 {
+                eprintln!("{}", format!("Templates ready at: {}", out).green().bold());
+                eprintln!("Run: cyweb scan <url> --templates {}", out);
             }
         }
         Commands::Version => {
