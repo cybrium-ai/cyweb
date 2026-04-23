@@ -37,6 +37,7 @@ pub struct ScanConfig {
     pub platform: String,
     pub evasion_mode: u8,
     pub mutate_mode: u8,
+    pub fuzz_enabled: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -384,12 +385,13 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Phase 8: Spider/Crawler (if enabled)
+    let mut crawled_urls: Vec<String> = Vec::new();
     if config.spider_enabled {
         eprintln!(
             "{}",
             format!("Phase 8: Spider (depth={})...", config.spider_depth).cyan()
         );
-        let (spider_findings, spider_requests) =
+        let (spider_findings, spider_requests, urls) =
             crate::crawler::crawl(&client, &target, config.spider_depth, config.threads).await;
         eprintln!(
             "  {} pages crawled, {} findings",
@@ -397,6 +399,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         );
         requests_made += spider_requests;
         all_findings.extend(spider_findings);
+        crawled_urls = urls;
     }
 
     // Phase 9: CVE matching
@@ -449,6 +452,18 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             all_findings.extend(auto_spec);
             requests_made += 5;
         }
+    }
+
+    // Phase 12: Active fuzzing (SQLi, XSS, SSTI, CMDi, SSRF, LFI)
+    if config.fuzz_enabled && run_phase("fuzz") {
+        eprintln!(
+            "{}",
+            format!("Phase 12: Active fuzzing ({})...", crate::fuzz::describe()).cyan()
+        );
+        let fuzz_findings =
+            crate::fuzz::run_fuzz(&client, &target, &crawled_urls, baseline_hash).await;
+        eprintln!("  {} injection vulnerabilities found", fuzz_findings.len());
+        all_findings.extend(fuzz_findings);
     }
 
     // Deduplicate findings

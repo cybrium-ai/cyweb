@@ -5,12 +5,13 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 
+/// Returns (findings, request_count, crawled_urls).
 pub async fn crawl(
     client: &Client,
     target: &str,
     max_depth: usize,
     _concurrency: usize,
-) -> (Vec<Finding>, usize) {
+) -> (Vec<Finding>, usize, Vec<String>) {
     let mut findings = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
     let mut queue: Vec<(String, usize)> = vec![(target.to_string(), 0)];
@@ -116,5 +117,6 @@ pub async fn crawl(
         }
     }
 
-    (findings, requests)
+    let crawled_urls: Vec<String> = visited.into_iter().collect();
+    (findings, requests, crawled_urls)
 }

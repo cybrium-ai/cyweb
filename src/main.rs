@@ -13,6 +13,7 @@ mod checkpoint;
 mod form_login;
 mod evasion;
 mod mutate;
+mod fuzz;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -163,6 +164,11 @@ enum Commands {
         /// 3=Apache ~user, 4=cgiwrap, 5=common dirs, 6=all
         #[arg(long, short = 'm')]
         mutate: Option<u8>,
+
+        /// Active fuzzing: inject SQLi, XSS, SSTI, CMDi, SSRF, path traversal
+        /// payloads into discovered parameters and analyze responses
+        #[arg(long)]
+        fuzz: bool,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -216,6 +222,7 @@ async fn main() {
             platform,
             evasion,
             mutate,
+            fuzz,
         } => {
             print_banner();
 
@@ -250,6 +257,7 @@ async fn main() {
                 platform,
                 evasion_mode: evasion.unwrap_or(0),
                 mutate_mode: mutate.unwrap_or(0),
+                fuzz_enabled: fuzz,
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies
