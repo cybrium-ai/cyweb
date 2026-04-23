@@ -38,6 +38,7 @@ pub struct ScanConfig {
     pub evasion_mode: u8,
     pub mutate_mode: u8,
     pub fuzz_enabled: bool,
+    pub payloads_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -454,14 +455,16 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         }
     }
 
-    // Phase 12: Active fuzzing (SQLi, XSS, SSTI, CMDi, SSRF, LFI)
+    // Phase 12: Active fuzzing — context-aware, YAML-driven
     if config.fuzz_enabled && run_phase("fuzz") {
         eprintln!(
             "{}",
             format!("Phase 12: Active fuzzing ({})...", crate::fuzz::describe()).cyan()
         );
-        let fuzz_findings =
-            crate::fuzz::run_fuzz(&client, &target, &crawled_urls, baseline_hash).await;
+        let fuzz_findings = crate::fuzz::run_fuzz(
+            &client, &target, &server_info, &crawled_urls, baseline_hash,
+            config.payloads_dir.as_deref(),
+        ).await;
         eprintln!("  {} injection vulnerabilities found", fuzz_findings.len());
         all_findings.extend(fuzz_findings);
     }

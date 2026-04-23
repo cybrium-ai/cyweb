@@ -169,6 +169,10 @@ enum Commands {
         /// payloads into discovered parameters and analyze responses
         #[arg(long)]
         fuzz: bool,
+
+        /// Custom payloads directory for active fuzzing (YAML files)
+        #[arg(long)]
+        payloads: Option<String>,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -223,6 +227,7 @@ async fn main() {
             evasion,
             mutate,
             fuzz,
+            payloads,
         } => {
             print_banner();
 
@@ -258,6 +263,7 @@ async fn main() {
                 evasion_mode: evasion.unwrap_or(0),
                 mutate_mode: mutate.unwrap_or(0),
                 fuzz_enabled: fuzz,
+                payloads_dir: payloads,
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies

@@ -1,0 +1,32 @@
+id: cors-misconfig
+name: CORS misconfiguration
+context:
+  any: true
+
+payloads:
+  - value: "https://evil.cyweb.test"
+    detect: { header_contains: { "Access-Control-Allow-Origin": "evil.cyweb.test" } }
+    id: cors-reflect-01
+    title: "CORS — origin reflected (any origin accepted)"
+    severity: high
+    cwe: CWE-942
+    inject_as: header
+    header_name: Origin
+
+  - value: "null"
+    detect: { header_contains: { "Access-Control-Allow-Origin": "null" } }
+    id: cors-null-01
+    title: "CORS — null origin accepted"
+    severity: high
+    cwe: CWE-942
+    inject_as: header
+    header_name: Origin
+
+  - value: "https://target.com.evil.test"
+    detect: { header_contains: { "Access-Control-Allow-Origin": "evil.test" } }
+    id: cors-subdomain-01
+    title: "CORS — subdomain prefix bypass"
+    severity: high
+    cwe: CWE-942
+    inject_as: header
+    header_name: Origin

