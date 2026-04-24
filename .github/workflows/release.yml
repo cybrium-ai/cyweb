@@ -20,17 +20,21 @@ jobs:
             name: cyweb-linux-amd64
             sign: false
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             name: cyweb-linux-arm64
             sign: false
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13
             name: cyweb-darwin-amd64
             sign: true
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-14
             name: cyweb-darwin-arm64
             sign: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: cyweb-windows-amd64.exe
+            sign: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,14 +42,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - run: cargo build --release --target ${{ matrix.target }}
 
@@ -79,11 +75,18 @@ jobs:
           codesign --verify --deep --strict target/${{ matrix.target }}/release/cyweb
           echo "Signed and verified: ${{ matrix.name }}"
 
-      - name: Package binary
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/cyweb dist/${{ matrix.name }}
           chmod +x dist/${{ matrix.name }}
+
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/cyweb.exe dist/${{ matrix.name }}
 
       - name: Notarize macOS binary
         if: matrix.sign
@@ -131,6 +134,7 @@ jobs:
             artifacts/cyweb-linux-arm64/cyweb-linux-arm64
             artifacts/cyweb-darwin-amd64/cyweb-darwin-amd64
             artifacts/cyweb-darwin-arm64/cyweb-darwin-arm64
+            artifacts/cyweb-windows-amd64.exe/cyweb-windows-amd64.exe
             artifacts/checksums.txt
 
   docker:
