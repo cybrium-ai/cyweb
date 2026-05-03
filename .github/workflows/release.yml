@@ -137,6 +137,86 @@ jobs:
             artifacts/cyweb-windows-amd64.exe/cyweb-windows-amd64.exe
             artifacts/checksums.txt
 
+      # ── Auto-publish Homebrew formula to cybrium-ai/homebrew-cli ──
+      - name: Resolve version
+        id: ver
+        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract per-platform SHA256s
+        id: sums
+        run: |
+          {
+            echo "darwin_arm64_sha=$(awk '/cyweb-darwin-arm64$/  {print $1}' artifacts/checksums.txt)"
+            echo "darwin_amd64_sha=$(awk '/cyweb-darwin-amd64$/  {print $1}' artifacts/checksums.txt)"
+            echo "linux_arm64_sha=$(awk  '/cyweb-linux-arm64$/   {print $1}' artifacts/checksums.txt)"
+            echo "linux_amd64_sha=$(awk  '/cyweb-linux-amd64$/   {print $1}' artifacts/checksums.txt)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: cybrium-ai/homebrew-cli
+          token:      ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path:       homebrew-cli
+
+      - name: Render + commit Formula/cyweb.rb
+        run: |
+          VERSION="${{ steps.ver.outputs.tag }}"
+          BASE="https://github.com/cybrium-ai/cyweb/releases/download/v${VERSION}"
+          mkdir -p homebrew-cli/Formula
+          cat > homebrew-cli/Formula/cyweb.rb <<RUBY
+          class Cyweb < Formula
+            desc     "Cybrium Web — fast web vulnerability scanner (Nikto replacement)"
+            homepage "https://github.com/cybrium-ai/cyweb"
+            license  "Apache-2.0"
+            version  "${VERSION}"
+
+            on_macos do
+              on_arm do
+                url    "${BASE}/cyweb-darwin-arm64"
+                sha256 "${{ steps.sums.outputs.darwin_arm64_sha }}"
+              end
+              on_intel do
+                url    "${BASE}/cyweb-darwin-amd64"
+                sha256 "${{ steps.sums.outputs.darwin_amd64_sha }}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url    "${BASE}/cyweb-linux-arm64"
+                sha256 "${{ steps.sums.outputs.linux_arm64_sha }}"
+              end
+              on_intel do
+                url    "${BASE}/cyweb-linux-amd64"
+                sha256 "${{ steps.sums.outputs.linux_amd64_sha }}"
+              end
+            end
+
+            def install
+              if OS.mac? && Hardware::CPU.arm?
+                bin.install "cyweb-darwin-arm64" => "cyweb"
+              elsif OS.mac? && Hardware::CPU.intel?
+                bin.install "cyweb-darwin-amd64" => "cyweb"
+              elsif OS.linux? && Hardware::CPU.arm?
+                bin.install "cyweb-linux-arm64" => "cyweb"
+              else
+                bin.install "cyweb-linux-amd64" => "cyweb"
+              end
+            end
+
+            test do
+              assert_match "cyweb", shell_output("#{bin}/cyweb version")
+            end
+          end
+          RUBY
+          cd homebrew-cli
+          git config user.name  "cybrium-bot"
+          git config user.email "bot@cybrium.ai"
+          git add Formula/cyweb.rb
+          git commit -m "cyweb: bump to v${VERSION}" || echo "no changes"
+          git push
+
   docker:
     needs: build
     runs-on: ubuntu-latest
