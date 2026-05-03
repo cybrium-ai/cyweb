@@ -14,6 +14,7 @@ mod form_login;
 mod evasion;
 mod mutate;
 mod fuzz;
+mod hardware_rot;
 mod templates;
 mod nuclei_convert;
 
@@ -195,6 +196,11 @@ enum Commands {
     },
     /// Show version info
     Version,
+
+    /// Report this host's hardware Root of Trust (TPM / Secure Enclave).
+    /// Detection only — feeds scanner-identity and tamper-detection
+    /// flows. JSON output: {kind, vendor, present}.
+    Rot,
 }
 
 #[tokio::main]
@@ -581,6 +587,14 @@ async fn main() {
                         );
                     }
                 }
+            }
+        }
+
+        Commands::Rot => {
+            let r = hardware_rot::detect();
+            match serde_json::to_string_pretty(&r) {
+                Ok(j)  => println!("{j}"),
+                Err(e) => eprintln!("error serialising root-of-trust: {e}"),
             }
         }
     }
