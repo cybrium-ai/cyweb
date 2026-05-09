@@ -23,6 +23,10 @@ mod fuzz;
 mod hardware_rot;
 mod templates;
 mod nuclei_convert;
+// Sprint 76 — modern vuln classes that need Rust runtime extensions.
+// race needs concurrent-burst orchestration; websocket needs a WS client.
+mod race;
+mod websocket;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;

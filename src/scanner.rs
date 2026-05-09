@@ -486,6 +486,27 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         }
     }
 
+    // Sprint 76 Phase 5 — Race condition probes. Intrusive; gated at the
+    // platform side (`requires_intrusive_attestation`) before this rule
+    // dispatches. Off by default in cyweb's scan-tuning; opt-in via
+    // tuning="race".
+    if run_phase("race") {
+        eprintln!("{}", "Phase 14: Race condition probes...".cyan());
+        let race_findings = crate::race::run_race(&client, &target, &crawled_urls).await;
+        eprintln!("  {} race-condition findings", race_findings.len());
+        all_findings.extend(race_findings);
+    }
+
+    // Sprint 76 Phase 7 — WebSocket hijacking probes. Non-intrusive but
+    // can be slow against a /16 sweep; default-on but bounded by the
+    // candidate-picker (common paths + WS-shaped URLs from the crawler).
+    if run_phase("websocket") {
+        eprintln!("{}", "Phase 15: WebSocket hijacking probes...".cyan());
+        let ws_findings = crate::websocket::run_websocket(&target, &crawled_urls).await;
+        eprintln!("  {} WebSocket findings", ws_findings.len());
+        all_findings.extend(ws_findings);
+    }
+
     // Deduplicate findings
     all_findings.sort_by(|a, b| a.id.cmp(&b.id));
     all_findings.dedup_by(|a, b| a.id == b.id);

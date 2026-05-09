@@ -34,6 +34,11 @@ rand = "0.8"
 dirs = "5"
 hex = "0.4"
 walkdir = "2"
+# Sprint 76 Phase 7 — WebSocket hijacking. tokio-tungstenite is the
+# canonical async WS client; rustls-tls-native-roots matches reqwest's
+# rustls feature so we don't drag in OpenSSL.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+http = "1"
 
 [profile.release]
 opt-level = 3
