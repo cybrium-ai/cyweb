@@ -18,7 +18,13 @@
 # /opt/cyweb so users can run `cyweb scan ... --payloads /opt/cyweb/payloads`
 # without mounting anything from the host.
 
-FROM debian:bookworm-slim
+# Trixie (Debian 13) ships glibc 2.40, which is required because the
+# release matrix builds linux-amd64 on `ubuntu-latest` (Ubuntu 24.04 =
+# glibc 2.39) and linux-arm64 on `ubuntu-24.04-arm` (also glibc 2.39).
+# Bookworm (12) only has glibc 2.36, so the binary fails to load with:
+#   /usr/local/bin/cyweb: /lib/x86_64-linux-gnu/libc.so.6:
+#   version `GLIBC_2.39' not found
+FROM debian:trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
