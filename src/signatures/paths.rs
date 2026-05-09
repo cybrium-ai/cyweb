@@ -268,6 +268,7 @@ pub async fn check_paths(
                                 url,
                                 cwe: Some(check.cwe.into()),
                                 remediation: format!("Remove or restrict access to {}", check.path),
+                                vuln_class: None,
                             })
                         } else if (status == 301 || status == 302) && !matches!(validator, Validator::StatusOnly) {
                             // Redirects on specific-content paths are usually real
@@ -281,6 +282,7 @@ pub async fn check_paths(
                                 url,
                                 cwe: Some(check.cwe.into()),
                                 remediation: format!("Verify access to {}", check.path),
+                                vuln_class: None,
                             })
                         } else if status == 403 && check.severity as u8 <= Severity::High as u8 {
                             Some(Finding {
@@ -293,6 +295,7 @@ pub async fn check_paths(
                                 url,
                                 cwe: Some(check.cwe.into()),
                                 remediation: "Verify that this resource is properly secured.".into(),
+                                vuln_class: None,
                             })
                         } else {
                             None

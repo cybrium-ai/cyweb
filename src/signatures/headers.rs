@@ -26,6 +26,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-1021".into()),
             remediation: "Add 'X-Frame-Options: DENY' or 'X-Frame-Options: SAMEORIGIN' to all responses.".into(),
+            vuln_class: None,
         });
     }
 
@@ -41,6 +42,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-319".into()),
             remediation: "Add 'Strict-Transport-Security: max-age=31536000; includeSubDomains; preload'.".into(),
+            vuln_class: None,
         });
     }
 
@@ -56,6 +58,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-693".into()),
             remediation: "Implement a strict Content-Security-Policy. Start with: default-src 'self'; script-src 'self'".into(),
+            vuln_class: None,
         });
     }
 
@@ -71,6 +74,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-693".into()),
             remediation: "Add 'X-Content-Type-Options: nosniff' to all responses.".into(),
+            vuln_class: None,
         });
     }
 
@@ -86,6 +90,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-200".into()),
             remediation: "Add 'Referrer-Policy: strict-origin-when-cross-origin' or 'no-referrer'.".into(),
+            vuln_class: None,
         });
     }
 
@@ -101,6 +106,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-693".into()),
             remediation: "Add 'Permissions-Policy: camera=(), microphone=(), geolocation=()'.".into(),
+            vuln_class: None,
         });
     }
 
@@ -117,6 +123,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
                 url: url.clone(),
                 cwe: Some("CWE-200".into()),
                 remediation: "Configure the web server to remove or genericize the Server header.".into(),
+                vuln_class: None,
             });
         }
     }
@@ -133,6 +140,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
             url: url.clone(),
             cwe: Some("CWE-200".into()),
             remediation: "Remove the X-Powered-By header from all responses.".into(),
+            vuln_class: None,
         });
     }
 
@@ -151,6 +159,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
                     url: url.clone(),
                     cwe: Some("CWE-1004".into()),
                     remediation: "Add the HttpOnly flag to all session and sensitive cookies.".into(),
+                    vuln_class: None,
                 });
             }
             if target.starts_with("https") && !lower.contains("secure") {
@@ -164,6 +173,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
                     url: url.clone(),
                     cwe: Some("CWE-614".into()),
                     remediation: "Add the Secure flag to all cookies on HTTPS sites.".into(),
+                    vuln_class: None,
                 });
             }
             if !lower.contains("samesite") {
@@ -177,6 +187,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
                     url: url.clone(),
                     cwe: Some("CWE-352".into()),
                     remediation: "Add 'SameSite=Lax' or 'SameSite=Strict' to all cookies.".into(),
+                    vuln_class: None,
                 });
             }
         }
@@ -195,6 +206,7 @@ pub async fn check_headers(client: &Client, target: &str) -> Vec<Finding> {
                 url: url.clone(),
                 cwe: Some("CWE-942".into()),
                 remediation: "Restrict CORS to specific trusted origins instead of using wildcard.".into(),
+                vuln_class: None,
             });
         }
     }

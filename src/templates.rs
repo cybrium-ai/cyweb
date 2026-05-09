@@ -336,6 +336,7 @@ async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<
                     url,
                     cwe: tpl.info.cwe.first().cloned(),
                     remediation: tpl.info.remediation.clone(),
+                    vuln_class: None,
                 });
 
                 eprintln!(

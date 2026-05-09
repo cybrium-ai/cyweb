@@ -1,0 +1,83 @@
+id: grpc-web
+name: gRPC-Web misconfiguration
+context:
+  content_type: ["application/grpc-web", "application/grpc-web+proto", "application/grpc-web+json"]
+  paths: ["/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"]
+
+# Sprint 76 Phase 8 — gRPC-Web detection + fuzzing.
+# Non-intrusive — read-only RPC enumeration via reflection +
+# auth-bypass probes per discovered method. We don't fuzz protobuf
+# field values (that's a separate intrusive class); this rule
+# focuses on auth/exposure misconfigurations that ship by default.
+
+payloads:
+  # ── Reflection enabled ──────────────────────────────────────────────────
+  # If the server's gRPC reflection service is exposed, anyone can
+  # introspect every method + message type. Production servers
+  # should disable reflection.
+  - value: ""
+    detect:
+      body_contains: "ServerReflection"
+    id: grpc-reflection-01
+    title: "gRPC-Web — reflection service publicly accessible"
+    severity: medium
+    cwe: CWE-200
+    inject_as: query
+    vuln_class: grpc_web
+
+  # ── Anonymous health check ──────────────────────────────────────────────
+  # gRPC health checks frequently ship without auth and leak service
+  # topology + version information.
+  - value: ""
+    detect:
+      body_contains: "SERVING"
+    id: grpc-health-01
+    title: "gRPC-Web — Health.Check accessible without auth"
+    severity: low
+    cwe: CWE-200
+    inject_as: query
+    vuln_class: grpc_web
+
+  # ── Trailers leaking server stack ───────────────────────────────────────
+  # gRPC-Web trailers (after the proto frames) often include
+  # `grpc-status` + `grpc-message` strings that reveal the back-end
+  # framework version.
+  - value: ""
+    detect:
+      header_contains:
+        "grpc-message": "version"
+    id: grpc-trailer-leak-01
+    title: "gRPC-Web — trailer leaks server framework version"
+    severity: info
+    cwe: CWE-200
+    inject_as: query
+    vuln_class: grpc_web
+
+  # ── CORS misconfiguration on gRPC-Web endpoint ──────────────────────────
+  # Default Envoy / gRPC-Web proxy configs sometimes ship with `*` in
+  # `Access-Control-Allow-Origin`, letting any origin call sensitive
+  # methods that browsers would otherwise block.
+  - value: "https://attacker.example"
+    detect:
+      header_contains:
+        "Access-Control-Allow-Origin": "https://attacker.example"
+    id: grpc-cors-01
+    title: "gRPC-Web — CORS allows arbitrary origin"
+    severity: high
+    cwe: CWE-942
+    inject_as: header
+    header_name: Origin
+    vuln_class: grpc_web
+
+  # ── Anonymous unary call via reflection-discovered method ───────────────
+  # Discover the method via reflection (rule above), then invoke
+  # without an Authorization header. Successful 200/OK on an
+  # `Account.Get` or `User.List`-shaped method is HIGH severity.
+  - value: ""
+    detect: { status_change: true }
+    id: grpc-anon-unary-01
+    title: "gRPC-Web — unary call accepted without authentication"
+    severity: high
+    cwe: CWE-306
+    inject_as: query
+    vuln_class: grpc_web
