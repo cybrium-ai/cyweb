@@ -1,6 +1,6 @@
 [package]
 name = "cyweb"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 authors = ["Cybrium AI <hello@cybrium.ai>"]
 description = "Fast, accurate web vulnerability scanner. Scans headers, paths, server configs, and known vulnerabilities."
