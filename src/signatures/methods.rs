@@ -19,6 +19,7 @@ pub async fn check_methods(client: &Client, target: &str) -> Vec<Finding> {
                 url: target.into(),
                 cwe: Some("CWE-693".into()),
                 remediation: "Disable the TRACE method on the web server.".into(),
+                vuln_class: None,
             });
         }
     }
@@ -40,6 +41,7 @@ pub async fn check_methods(client: &Client, target: &str) -> Vec<Finding> {
                         url: target.into(),
                         cwe: Some("CWE-749".into()),
                         remediation: format!("Disable the {method} method if not required, or ensure it requires authentication."),
+                        vuln_class: None,
                     });
                 }
             }

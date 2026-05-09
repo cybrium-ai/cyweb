@@ -106,6 +106,7 @@ pub async fn scan_openapi(client: &Client, spec_url: &str, target: &str) -> Vec<
         url: spec_url.into(),
         cwe: Some("CWE-200".into()),
         remediation: "Consider restricting API documentation access to authenticated users.".into(),
+        vuln_class: None,
     });
 
     let paths = match spec.paths {
@@ -145,6 +146,7 @@ pub async fn scan_openapi(client: &Client, spec_url: &str, target: &str) -> Vec<
                     url: format!("{target}{path}"),
                     cwe: Some("CWE-284".into()),
                     remediation: "Add security requirements to all write endpoints.".into(),
+                    vuln_class: None,
                 });
             }
 
@@ -166,6 +168,7 @@ pub async fn scan_openapi(client: &Client, spec_url: &str, target: &str) -> Vec<
                         url: format!("{target}{path}"),
                         cwe: Some("CWE-306".into()),
                         remediation: "Require authentication for all sensitive endpoints.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -187,6 +190,7 @@ pub async fn scan_openapi(client: &Client, spec_url: &str, target: &str) -> Vec<
                         url: format!("{target}{path}"),
                         cwe: Some("CWE-20".into()),
                         remediation: "Define schema with type, format, and constraints for all parameters.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -210,6 +214,7 @@ pub async fn scan_openapi(client: &Client, spec_url: &str, target: &str) -> Vec<
             url: target.into(),
             cwe: Some("CWE-306".into()),
             remediation: "Add security schemes and require them on all endpoints.".into(),
+            vuln_class: None,
         });
     }
 
@@ -230,6 +235,7 @@ pub async fn scan_openapi(client: &Client, spec_url: &str, target: &str) -> Vec<
                     url,
                     cwe: Some("CWE-209".into()),
                     remediation: "Investigate and fix server errors. Ensure error responses don't leak details.".into(),
+                    vuln_class: None,
                 });
             }
         }

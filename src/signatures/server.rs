@@ -25,6 +25,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                         url: target.into(),
                         cwe: Some("CWE-1104".into()),
                         remediation: "Update Apache to the latest stable version.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -44,6 +45,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                         url: target.into(),
                         cwe: Some("CWE-1104".into()),
                         remediation: "Update Nginx to the latest stable version.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -63,6 +65,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                         url: target.into(),
                         cwe: Some("CWE-1104".into()),
                         remediation: "Update to a supported IIS version.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -84,6 +87,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                         url: target.into(),
                         cwe: Some("CWE-1104".into()),
                         remediation: "Update PHP to 8.2+ or later.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -105,6 +109,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                     url: target.into(),
                     cwe: Some("CWE-200".into()),
                     remediation: "Configure custom error pages that don't reveal server details.".into(),
+                    vuln_class: None,
                 });
             }
             if lower.contains("iis") && lower.contains("microsoft") {
@@ -118,6 +123,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                     url: target.into(),
                     cwe: Some("CWE-200".into()),
                     remediation: "Configure custom error pages.".into(),
+                    vuln_class: None,
                 });
             }
             if lower.contains("stack trace") || lower.contains("traceback") || lower.contains("exception") {
@@ -131,6 +137,7 @@ pub async fn check_server(client: &Client, target: &str, info: &ServerInfo) -> V
                     url: target.into(),
                     cwe: Some("CWE-209".into()),
                     remediation: "Disable debug mode in production. Configure generic error pages.".into(),
+                    vuln_class: None,
                 });
             }
         }

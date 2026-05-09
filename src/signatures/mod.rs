@@ -19,6 +19,18 @@ pub struct Finding {
     pub url: String,
     pub cwe: Option<String>,
     pub remediation: String,
+    /// Sprint 76 — modern vuln-class taxonomy. Set by fuzz rules whose
+    /// YAML carries a `vuln_class` field. None for legacy / non-fuzz
+    /// findings (CVE matches, missing headers, exposed paths).
+    ///
+    /// Values: http_smuggling | jwt_confusion | prototype_pollution |
+    ///         race_condition | cache_poisoning | websocket_hijack |
+    ///         grpc_web
+    ///
+    /// Cybrium platform reads this from the JSON output and surfaces
+    /// it as a chip on FindingCard + per-class feature gating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vuln_class: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

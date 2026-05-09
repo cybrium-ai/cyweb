@@ -85,6 +85,14 @@ pub struct YamlPayload {
     /// Extra headers to send with this payload.
     #[serde(default)]
     pub extra_headers: HashMap<String, String>,
+    /// Sprint 76 — modern vuln-class taxonomy. Empty/missing for
+    /// legacy classes (XSS / SQLi / SSRF / etc.); set on the seven
+    /// modern classes (http_smuggling, jwt_confusion, prototype_pollution,
+    /// race_condition, cache_poisoning, websocket_hijack, grpc_web).
+    /// Propagates into Finding.vuln_class which the Cybrium platform
+    /// surfaces as a chip + per-class feature gate.
+    #[serde(default)]
+    pub vuln_class: String,
 }
 
 fn default_inject_as() -> String {
@@ -455,6 +463,11 @@ pub async fn run_fuzz(
                         url: fuzzed_url,
                         cwe: Some(payload.cwe.clone()),
                         remediation: remediation_for(&pf.id),
+                        vuln_class: if payload.vuln_class.is_empty() {
+                            None
+                        } else {
+                            Some(payload.vuln_class.clone())
+                        },
                     };
                     print_finding(&f);
                     findings.push(f);
@@ -529,6 +542,11 @@ async fn test_special_injection(
             url: target.to_string(),
             cwe: Some(payload.cwe.clone()),
             remediation: remediation_for(category),
+            vuln_class: if payload.vuln_class.is_empty() {
+                None
+            } else {
+                Some(payload.vuln_class.clone())
+            },
         }
     })
 }

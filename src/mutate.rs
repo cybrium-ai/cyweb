@@ -135,6 +135,7 @@ async fn enumerate_users_apache(
                             url,
                             cwe: Some("CWE-200".into()),
                             remediation: "Disable mod_userdir or restrict it to specific users.".into(),
+                            vuln_class: None,
                         })
                     }
                     _ => None,
@@ -175,6 +176,7 @@ async fn enumerate_users_cgiwrap(
                             url,
                             cwe: Some("CWE-200".into()),
                             remediation: "Disable cgiwrap or restrict user enumeration.".into(),
+                            vuln_class: None,
                         })
                     }
                     _ => None,
@@ -247,6 +249,7 @@ async fn check_urls(
                             url,
                             cwe: Some(cwe.clone()),
                             remediation: format!("Remove or restrict access to {path}"),
+                            vuln_class: None,
                         })
                     }
                     _ => None,

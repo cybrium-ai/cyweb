@@ -98,6 +98,7 @@ pub fn match_cves(info: &ServerInfo) -> Vec<Finding> {
                             url: String::new(),
                             cwe: None,
                             remediation: format!("Update {} to version {} or later.", entry.product, entry.version_below),
+                            vuln_class: None,
                         });
                     }
                 }
@@ -122,6 +123,7 @@ pub fn match_cves(info: &ServerInfo) -> Vec<Finding> {
                             url: String::new(),
                             cwe: None,
                             remediation: format!("Update PHP to version {} or later.", entry.version_below),
+                            vuln_class: None,
                         });
                     }
                 }

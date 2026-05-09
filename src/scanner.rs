@@ -655,6 +655,7 @@ async fn check_tls(target: &str) -> (Option<TlsInfo>, Vec<Finding>) {
             url: target.into(),
             cwe: Some("CWE-295".into()),
             remediation: "Renew the TLS certificate before expiry.".into(),
+            vuln_class: None,
         });
     }
 
@@ -669,6 +670,7 @@ async fn check_tls(target: &str) -> (Option<TlsInfo>, Vec<Finding>) {
             url: target.into(),
             cwe: Some("CWE-295".into()),
             remediation: "Replace the expired TLS certificate immediately.".into(),
+            vuln_class: None,
         });
     }
 
@@ -683,6 +685,7 @@ async fn check_tls(target: &str) -> (Option<TlsInfo>, Vec<Finding>) {
             url: target.into(),
             cwe: Some("CWE-326".into()),
             remediation: "Disable TLS 1.0, TLS 1.1, and SSLv3. Use TLS 1.2+ only.".into(),
+            vuln_class: None,
         });
     }
 

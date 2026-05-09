@@ -201,6 +201,7 @@ pub async fn check_rules(
                         url: url.clone(),
                         cwe: rule.cwe.clone(),
                         remediation: rule.remediation.clone(),
+                        vuln_class: None,
                     });
                     break; // One hit per rule is enough
                 }

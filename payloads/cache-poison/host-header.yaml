@@ -3,30 +3,102 @@ name: Web cache poisoning
 context:
   any: true
 
+# Sprint 76 Phase 6 — Cache deception + cache poisoning.
+# **Intrusive:** poisoning a real CDN cache hurts other users until the
+# entry is invalidated. Probes carry an `X-Cybrium-Probe: <token>`
+# header to unique-namespace the cache key when the target honours
+# vary-by-header — successful poisoning then only affects requests
+# carrying the same probe header. When the target ignores the probe
+# header (hot-spot CDN with fixed cache key), the rule falls back to
+# the standard intrusive-attestation gate.
+
 payloads:
-  - value: "evil.cyweb.test"
-    detect: { body_contains: "evil.cyweb.test" }
+  # ── Host header poisoning ───────────────────────────────────────────────
+  # Override the Host header to point at attacker-controlled origin;
+  # if the response is cached and includes user-visible content
+  # derived from Host, future visitors get poisoned content.
+  - value: "evil.cybrium.ai"
+    detect:
+      header_contains:
+        Host: "evil.cybrium.ai"
     id: cache-host-01
-    title: "Cache poisoning — Host header reflected in response"
+    title: "Cache poisoning — Host header reflection"
+    severity: high
+    cwe: CWE-444
+    inject_as: header
+    header_name: Host
+    extra_headers:
+      X-Cybrium-Probe: "cyweb-cache-probe"
+    vuln_class: cache_poisoning
+
+  # ── X-Forwarded-Host poisoning ──────────────────────────────────────────
+  - value: "evil.cybrium.ai"
+    detect:
+      body_contains: "evil.cybrium.ai"
+    id: cache-xfh-01
+    title: "Cache poisoning — X-Forwarded-Host reflection"
     severity: high
     cwe: CWE-444
     inject_as: header
     header_name: X-Forwarded-Host
+    extra_headers:
+      X-Cybrium-Probe: "cyweb-cache-probe"
+    vuln_class: cache_poisoning
 
-  - value: "evil.cyweb.test"
-    detect: { body_contains: "evil.cyweb.test" }
-    id: cache-fwd-01
-    title: "Cache poisoning — X-Forwarded-Host reflected"
+  # ── X-Original-URL / X-Rewrite-URL ──────────────────────────────────────
+  - value: "/admin"
+    detect: { status_change: true }
+    id: cache-xou-01
+    title: "Cache poisoning — X-Original-URL reflection"
     severity: high
     cwe: CWE-444
     inject_as: header
-    header_name: X-Forwarded-Host
+    header_name: X-Original-URL
+    extra_headers:
+      X-Cybrium-Probe: "cyweb-cache-probe"
+    vuln_class: cache_poisoning
 
-  - value: "evil.cyweb.test:443"
-    detect: { body_contains: "evil.cyweb.test" }
-    id: cache-port-01
-    title: "Cache poisoning — X-Forwarded-Port reflected"
+  # ── Cache deception via extension confusion ─────────────────────────────
+  # Append a static-asset extension to a sensitive path; if the cache
+  # treats `/account/profile.css` as cacheable while the back-end
+  # returns the dynamic profile page, future requesters see PII.
+  - value: ""
+    detect:
+      header_contains:
+        Cache-Control: "public"
+    id: cache-deception-css-01
+    title: "Cache deception — static extension confusion (.css)"
+    severity: high
+    cwe: CWE-525
+    inject_as: query   # appended to URL via dummy param; runtime adds .css trailer
+    extra_headers:
+      X-Cybrium-Probe: "cyweb-cache-probe"
+    vuln_class: cache_poisoning
+
+  - value: ""
+    detect:
+      header_contains:
+        Cache-Control: "public"
+    id: cache-deception-js-01
+    title: "Cache deception — static extension confusion (.js)"
+    severity: high
+    cwe: CWE-525
+    inject_as: query
+    extra_headers:
+      X-Cybrium-Probe: "cyweb-cache-probe"
+    vuln_class: cache_poisoning
+
+  # ── Cache key normalisation differential ────────────────────────────────
+  # Some CDNs lowercase the path before keying; back-end is
+  # case-sensitive. `/Login` vs `/login` may key the same but route
+  # differently — leaks one user's response to another.
+  - value: ""
+    detect: { status_change: true }
+    id: cache-key-norm-01
+    title: "Cache poisoning — case-sensitivity normalisation differential"
     severity: medium
-    cwe: CWE-444
-    inject_as: header
-    header_name: X-Forwarded-Port
+    cwe: CWE-525
+    inject_as: query
+    extra_headers:
+      X-Cybrium-Probe: "cyweb-cache-probe"
+    vuln_class: cache_poisoning

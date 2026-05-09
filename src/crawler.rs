@@ -76,6 +76,7 @@ pub async fn crawl(
                         url: final_url.clone(),
                         cwe: Some("CWE-319".into()),
                         remediation: "Ensure all login forms submit over HTTPS.".into(),
+                        vuln_class: None,
                     });
                 }
 
@@ -91,6 +92,7 @@ pub async fn crawl(
                         url: final_url.clone(),
                         cwe: Some("CWE-525".into()),
                         remediation: "Add autocomplete='off' to sensitive forms.".into(),
+                        vuln_class: None,
                     });
                 }
             }
@@ -112,6 +114,7 @@ pub async fn crawl(
                     url: final_url.clone(),
                     cwe: Some("CWE-615".into()),
                     remediation: "Remove all HTML comments from production pages.".into(),
+                    vuln_class: None,
                 });
             }
         }
