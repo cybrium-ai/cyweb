@@ -1,0 +1,12 @@
+# Keep the build context small — only the prebuilt binaries + payloads/rules.
+target/
+.git/
+.github/
+tests/
+docs/
+*.md
+LICENSE
+Cargo.lock
+Cargo.toml
+src/
+tools/
