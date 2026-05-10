@@ -172,6 +172,31 @@ jobs:
           install -m 0755 artifacts/cyweb-linux-amd64/cyweb-linux-amd64 ./cyweb-linux-amd64
           install -m 0755 artifacts/cyweb-linux-arm64/cyweb-linux-arm64 ./cyweb-linux-arm64
 
+      # Sprint v0.8.1 — convert the upstream community template repo
+      # into cyweb's format and bundle the converted set into the image.
+      # Runs on every `v*` tag so a fresh release always carries fresh
+      # templates. Conversion failures are tolerated (the converter
+      # skips templates whose DSL features aren't supported yet) — we
+      # publish whatever converts cleanly. The image build's COPY
+      # directive expects `templates-converted/` to exist even when
+      # empty.
+      - name: Convert upstream templates → cyweb format
+        run: |
+          mkdir -p templates-converted
+          # Best-effort clone — if the upstream repo is unreachable we
+          # ship the image without templates rather than fail the build.
+          if git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates /tmp/upstream-templates; then
+            install -m 0755 artifacts/cyweb-linux-amd64/cyweb-linux-amd64 /tmp/cyweb-converter
+            /tmp/cyweb-converter convert-templates \
+              --input /tmp/upstream-templates \
+              --output templates-converted/ \
+              || echo "convert-templates exited non-zero — using whatever converted cleanly"
+            CONVERTED=$(find templates-converted -name '*.yaml' | wc -l | tr -d ' ')
+            echo "Converted $CONVERTED templates from upstream community repo."
+          else
+            echo "Could not reach upstream templates — shipping image without bundled templates."
+          fi
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
