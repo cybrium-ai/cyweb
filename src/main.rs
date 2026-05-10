@@ -176,6 +176,14 @@ enum Commands {
         #[arg(long)]
         auth_script: Option<String>,
 
+        /// v0.8.6.1 — HTTP version preference. "auto" (default) lets
+        /// rustls negotiate via ALPN — h2 over TLS, h1 cleartext.
+        /// "1" forces HTTP/1.1 (useful when h2 framing might mask
+        /// signatures). "2" forces HTTP/2 (h2c on plaintext targets,
+        /// h2 over TLS).
+        #[arg(long, default_value = "auto")]
+        http_version: String,
+
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
         full: bool,
@@ -365,6 +373,7 @@ async fn main() {
             session_expired_pattern,
             session_expired_sentinel,
             auth_script,
+            http_version,
         } => {
             print_banner();
 
@@ -406,6 +415,7 @@ async fn main() {
                 session_max_relogins,
                 session_expired_pattern: session_expired_pattern.clone(),
                 session_expired_sentinel: session_expired_sentinel.clone(),
+                http_version: http_version.clone(),
             };
 
             // v0.8.6 — Scripted authentication. Runs before form-login.

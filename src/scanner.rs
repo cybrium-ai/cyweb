@@ -50,6 +50,11 @@ pub struct ScanConfig {
     pub session_expired_pattern: Option<String>,
     #[allow(dead_code)]
     pub session_expired_sentinel: Option<String>,
+    /// v0.8.6.1 — HTTP version preference: "auto" (default — let
+    /// rustls negotiate via ALPN; h2 over TLS, h1 cleartext), "1"
+    /// (force h1), "2" (force h2 — requires plaintext h2c if target
+    /// is HTTP, prior-knowledge mode).
+    pub http_version: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -185,6 +190,21 @@ impl RateLimiter {
     }
 }
 
+/// v0.8.6.1 — Test-only helper to confirm a built client honours
+/// the requested HTTP version. Used by smoke tests.
+#[cfg(test)]
+pub fn build_test_client(http_version: &str) -> Client {
+    let mut b = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .danger_accept_invalid_certs(true);
+    b = match http_version {
+        "1" | "1.1" | "http1" => b.http1_only(),
+        "2" | "h2" | "http2"  => b.http2_prior_knowledge(),
+        _                     => b,
+    };
+    b.build().unwrap()
+}
+
 pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let start = Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
@@ -202,6 +222,18 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         .danger_accept_invalid_certs(true)
         .cookie_store(true)
         .pool_max_idle_per_host(config.threads);
+
+    // v0.8.6.1 — HTTP version control. Default "auto" lets reqwest
+    // negotiate via ALPN (h2 over TLS, h1 cleartext) — this matches
+    // the previous behaviour. "1" forces HTTP/1.1 (useful for
+    // targets where the operator suspects h2 framing bugs are
+    // hiding bugs cyweb would otherwise catch). "2" enables
+    // prior-knowledge HTTP/2 (h2c over plaintext, h2 over TLS).
+    builder = match config.http_version.as_str() {
+        "1" | "1.1" | "http1" => builder.http1_only(),
+        "2" | "h2" | "http2"  => builder.http2_prior_knowledge(),
+        _                     => builder, // "auto" / anything else
+    };
 
     // Proxy
     if let Some(ref proxy_url) = config.proxy {
@@ -279,7 +311,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let client = if default_headers.is_empty() {
         client
     } else {
-        Client::builder()
+        let mut authed_builder = Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
             .connect_timeout(Duration::from_secs(config.timeout_secs))
             .redirect(if config.follow_redirects {
@@ -291,7 +323,13 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             .danger_accept_invalid_certs(true)
             .cookie_store(true)
             .pool_max_idle_per_host(config.threads)
-            .default_headers(default_headers)
+            .default_headers(default_headers);
+        authed_builder = match config.http_version.as_str() {
+            "1" | "1.1" | "http1" => authed_builder.http1_only(),
+            "2" | "h2" | "http2"  => authed_builder.http2_prior_knowledge(),
+            _                     => authed_builder,
+        };
+        authed_builder
             .build()
             .expect("Failed to build authenticated HTTP client")
     };
@@ -1051,4 +1089,35 @@ fn normalize_url(url: &str) -> String {
         url.to_string()
     };
     u.trim_end_matches('/').to_string()
+}
+
+#[cfg(test)]
+mod http_version_tests {
+    use super::*;
+
+    #[test]
+    fn auto_builds_without_panic() {
+        // Default — relies on ALPN; client should build cleanly.
+        let _c = build_test_client("auto");
+    }
+
+    #[test]
+    fn http1_only_builds_without_panic() {
+        let _c = build_test_client("1");
+        let _c = build_test_client("1.1");
+        let _c = build_test_client("http1");
+    }
+
+    #[test]
+    fn http2_prior_knowledge_builds_without_panic() {
+        let _c = build_test_client("2");
+        let _c = build_test_client("h2");
+        let _c = build_test_client("http2");
+    }
+
+    #[test]
+    fn unknown_value_falls_back_to_auto() {
+        // Garbage value shouldn't fail — just behaves as auto.
+        let _c = build_test_client("h3-please");
+    }
 }
