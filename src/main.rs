@@ -20,6 +20,7 @@ mod form_login;
 mod evasion;
 mod mutate;
 mod fuzz;
+mod gui;
 mod hardware_rot;
 mod templates;
 mod nuclei_convert;
@@ -190,6 +191,17 @@ enum Commands {
         /// Template directory for advanced multi-step scanning (Nuclei-compatible)
         #[arg(long)]
         templates: Option<String>,
+
+        /// After the scan completes, start a local web UI showing the
+        /// findings table with severity filters, search, and JSON/CSV/
+        /// Markdown export. Bound to 127.0.0.1 only — no auth, localhost
+        /// access only. The UI keeps running until Ctrl-C.
+        #[arg(long)]
+        gui: bool,
+
+        /// Port for the local web UI (only meaningful with --gui).
+        #[arg(long, default_value = "8990")]
+        gui_port: u16,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -260,6 +272,8 @@ async fn main() {
             fuzz,
             payloads,
             templates,
+            gui,
+            gui_port,
         } => {
             print_banner();
 
@@ -394,6 +408,19 @@ async fn main() {
                         eprintln!("\n{} {}", "Report written to".green(), path);
                     }
                 }
+            }
+
+            // v0.8 Phase D — local web UI. After the scan completes
+            // (and any --output report was written above), start the
+            // axum server and block on it. Ctrl-C stops the server.
+            // Skipped silently when --gui isn't set so the binary
+            // exits with the standard "found vulns?" exit code.
+            if gui {
+                if let Err(e) = gui::start_server(result, gui_port).await {
+                    eprintln!("\n{} {}", "GUI server failed:".red(), e);
+                    process::exit(2);
+                }
+                process::exit(0);
             }
 
             let exit_code = if result.findings.is_empty() { 0 } else { 1 };

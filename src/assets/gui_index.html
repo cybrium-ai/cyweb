@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Cybrium — cyweb findings</title>
+<style>
+  /* ── Cybrium dark theme (matches platform tokens) ─────────────────────── */
+  :root {
+    --bg:        #0a0a13;
+    --surface:   #14141f;
+    --surface-2: #1c1c2a;
+    --border:    #2a2a3a;
+    --text:      #e4e4ea;
+    --muted:     #8a8a98;
+    --primary:   #9747ff;
+    --primary-2: #b074ff;
+    --accent:    #06b6d4;
+
+    --sev-critical: #dc2626;
+    --sev-high:     #f97316;
+    --sev-medium:   #facc15;
+    --sev-low:      #3b82f6;
+    --sev-info:     #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.5;
+    min-height: 100vh;
+  }
+  a { color: var(--primary-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Header bar ────────────────────────────────────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 28px;
+    background: linear-gradient(180deg, #14141f 0%, #0d0d18 100%);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header img { height: 32px; width: 32px; }
+  header .title { font-weight: 600; font-size: 16px; }
+  header .target {
+    margin-left: 24px; color: var(--muted); font-family: ui-monospace, monospace;
+    font-size: 13px;
+  }
+  header .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+  .export-group { display: flex; gap: 8px; margin-left: 16px; }
+  button {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font-size: 13px;
+    transition: all 120ms;
+  }
+  button:hover { border-color: var(--primary); color: var(--primary-2); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: white; }
+  button.primary:hover { background: var(--primary-2); }
+
+  /* ── Layout ────────────────────────────────────────────────────────────── */
+  main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+
+  /* ── Severity tile row ─────────────────────────────────────────────────── */
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px;
+    display: flex; flex-direction: column; gap: 4px;
+    position: relative; overflow: hidden;
+  }
+  .tile::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--accent);
+  }
+  .tile.critical::before { background: var(--sev-critical); }
+  .tile.high::before     { background: var(--sev-high); }
+  .tile.medium::before   { background: var(--sev-medium); }
+  .tile.low::before      { background: var(--sev-low); }
+  .tile.info::before     { background: var(--sev-info); }
+  .tile .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .tile .count { font-size: 28px; font-weight: 700; }
+
+  /* ── Filter bar ────────────────────────────────────────────────────────── */
+  .filters {
+    display: flex; gap: 12px; align-items: center; margin-bottom: 14px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px;
+  }
+  .filters input, .filters select {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 13px; outline: none;
+  }
+  .filters input { flex: 1; min-width: 200px; }
+  .filters input:focus, .filters select:focus { border-color: var(--primary); }
+
+  /* ── Findings table ────────────────────────────────────────────────────── */
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: var(--surface-2); color: var(--muted);
+    text-align: left; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    cursor: pointer; user-select: none;
+  }
+  th:hover { color: var(--primary-2); }
+  td {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:hover td { background: rgba(151, 71, 255, 0.04); cursor: pointer; }
+  tr.expanded td { background: rgba(151, 71, 255, 0.08); }
+
+  /* Severity pill */
+  .sev {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; min-width: 64px; text-align: center;
+  }
+  .sev.critical { background: color-mix(in srgb, var(--sev-critical) 18%, transparent); color: var(--sev-critical); border: 1px solid color-mix(in srgb, var(--sev-critical) 40%, transparent); }
+  .sev.high     { background: color-mix(in srgb, var(--sev-high)     18%, transparent); color: var(--sev-high);     border: 1px solid color-mix(in srgb, var(--sev-high)     40%, transparent); }
+  .sev.medium   { background: color-mix(in srgb, var(--sev-medium)   18%, transparent); color: var(--sev-medium);   border: 1px solid color-mix(in srgb, var(--sev-medium)   40%, transparent); }
+  .sev.low      { background: color-mix(in srgb, var(--sev-low)      18%, transparent); color: var(--sev-low);      border: 1px solid color-mix(in srgb, var(--sev-low)      40%, transparent); }
+  .sev.info     { background: color-mix(in srgb, var(--sev-info)     18%, transparent); color: var(--sev-info);     border: 1px solid color-mix(in srgb, var(--sev-info)     40%, transparent); }
+
+  .url-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cwe-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
+
+  /* Detail row (expanded) */
+  .detail-row td {
+    background: #0e0e18 !important;
+    padding: 18px 24px; border-left: 3px solid var(--primary);
+  }
+  .detail-grid {
+    display: grid; grid-template-columns: 120px 1fr; gap: 8px 18px;
+    font-size: 13px;
+  }
+  .detail-grid dt { color: var(--muted); font-weight: 500; }
+  .detail-grid dd { margin: 0; word-break: break-word; }
+  .detail-grid pre {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; margin: 0;
+    font-size: 12px; overflow-x: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
+
+  .empty {
+    text-align: center; padding: 48px 16px; color: var(--muted);
+  }
+
+  footer {
+    text-align: center; padding: 24px; color: var(--muted); font-size: 12px;
+  }
+  footer a { color: var(--primary-2); }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/logo.svg" alt="Cybrium"/>
+  <span class="title">cyweb findings</span>
+  <span class="target" id="target-host">—</span>
+  <span class="meta" id="scan-meta"></span>
+  <div class="export-group">
+    <button onclick="window.location='/api/export.json'">JSON</button>
+    <button onclick="window.location='/api/export.csv'">CSV</button>
+    <button onclick="window.location='/api/export.markdown'">Markdown</button>
+  </div>
+</header>
+
+<main>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="filters">
+    <input id="search" type="search" placeholder="Search title, URL, CWE, evidence…" autofocus>
+    <select id="filter-sev">
+      <option value="">All severities</option>
+      <option value="critical">Critical</option>
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+      <option value="info">Info</option>
+    </select>
+    <select id="filter-cat">
+      <option value="">All categories</option>
+    </select>
+    <span style="color: var(--muted); font-size: 12px;" id="filter-count"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="severity">Severity</th>
+          <th data-sort="title">Title</th>
+          <th data-sort="url">URL</th>
+          <th data-sort="cwe">CWE</th>
+          <th data-sort="category">Category</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+</main>
+
+<footer>
+  Cybrium AI · cyweb scanner · <a href="https://github.com/cybrium-ai/cyweb">github.com/cybrium-ai/cyweb</a>
+</footer>
+
+<script>
+  const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  let DATA = null;
+  let SORT = { key: 'severity', dir: 1 };
+  let EXPANDED = new Set();
+
+  function sevName(s) {
+    if (typeof s === 'string') return s.toLowerCase();
+    if (s && typeof s === 'object') return Object.keys(s)[0]?.toLowerCase() || 'info';
+    return 'info';
+  }
+
+  async function load() {
+    const res = await fetch('/api/result');
+    DATA = await res.json();
+    document.getElementById('target-host').textContent = DATA.target;
+    const dur = (DATA.duration_ms / 1000).toFixed(1);
+    document.getElementById('scan-meta').textContent =
+      `${DATA.findings.length} findings · ${dur}s · ${DATA.summary.requests_made} requests`;
+    renderTiles();
+    populateCategories();
+    render();
+  }
+
+  function renderTiles() {
+    const s = DATA.summary;
+    const html = ['critical','high','medium','low','info'].map(k => `
+      <div class="tile ${k}" data-sev="${k}">
+        <span class="label">${k}</span>
+        <span class="count">${s[k]}</span>
+      </div>
+    `).join('');
+    document.getElementById('tiles').innerHTML = html;
+    document.querySelectorAll('.tile').forEach(el => {
+      el.style.cursor = 'pointer';
+      el.onclick = () => {
+        document.getElementById('filter-sev').value = el.dataset.sev;
+        render();
+      };
+    });
+  }
+
+  function populateCategories() {
+    const cats = [...new Set(DATA.findings.map(f => f.category))].sort();
+    const sel = document.getElementById('filter-cat');
+    cats.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    });
+  }
+
+  function escape(s) {
+    return String(s ?? '').replace(/[&<>"']/g, ch => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[ch]));
+  }
+
+  function filtered() {
+    const q = document.getElementById('search').value.toLowerCase();
+    const sev = document.getElementById('filter-sev').value;
+    const cat = document.getElementById('filter-cat').value;
+    return DATA.findings.filter(f => {
+      const fsev = sevName(f.severity);
+      if (sev && fsev !== sev) return false;
+      if (cat && f.category !== cat) return false;
+      if (q) {
+        const hay = `${f.title} ${f.url} ${f.cwe ?? ''} ${f.evidence ?? ''} ${f.description}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  function sortFindings(arr) {
+    const k = SORT.key, dir = SORT.dir;
+    return arr.slice().sort((a, b) => {
+      let av, bv;
+      if (k === 'severity') {
+        av = SEV_ORDER[sevName(a.severity)] ?? 9;
+        bv = SEV_ORDER[sevName(b.severity)] ?? 9;
+      } else {
+        av = (a[k] ?? '').toString().toLowerCase();
+        bv = (b[k] ?? '').toString().toLowerCase();
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+  }
+
+  function render() {
+    const rows = document.getElementById('rows');
+    const items = sortFindings(filtered());
+    document.getElementById('filter-count').textContent =
+      `${items.length} of ${DATA.findings.length} findings`;
+    if (items.length === 0) {
+      rows.innerHTML = `<tr><td colspan="5" class="empty">No findings match the current filters.</td></tr>`;
+      return;
+    }
+    rows.innerHTML = items.map((f, i) => {
+      const sev = sevName(f.severity);
+      const isOpen = EXPANDED.has(rowKey(f));
+      const main = `
+        <tr class="${isOpen ? 'expanded' : ''}" data-key="${escape(rowKey(f))}">
+          <td><span class="sev ${sev}">${sev}</span></td>
+          <td><strong>${escape(f.title)}</strong></td>
+          <td class="url-cell" title="${escape(f.url)}">${escape(f.url)}</td>
+          <td class="cwe-cell">${escape(f.cwe ?? '—')}</td>
+          <td>${escape(f.category)}</td>
+        </tr>
+      `;
+      if (!isOpen) return main;
+      return main + `
+        <tr class="detail-row">
+          <td colspan="5">
+            <dl class="detail-grid">
+              <dt>Description</dt><dd>${escape(f.description)}</dd>
+              ${f.evidence ? `<dt>Evidence</dt><dd><pre>${escape(f.evidence)}</pre></dd>` : ''}
+              ${f.remediation ? `<dt>Remediation</dt><dd>${escape(f.remediation)}</dd>` : ''}
+              <dt>Rule ID</dt><dd><code>${escape(f.id)}</code></dd>
+              ${f.vuln_class ? `<dt>Vuln class</dt><dd><code>${escape(f.vuln_class)}</code></dd>` : ''}
+            </dl>
+          </td>
+        </tr>
+      `;
+    }).join('');
+    rows.querySelectorAll('tr[data-key]').forEach(tr => {
+      tr.onclick = () => {
+        const k = tr.dataset.key;
+        if (EXPANDED.has(k)) EXPANDED.delete(k); else EXPANDED.add(k);
+        render();
+      };
+    });
+  }
+
+  function rowKey(f) { return `${f.id}|${f.url}`; }
+
+  // Sort header click
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      if (SORT.key === k) SORT.dir = -SORT.dir;
+      else { SORT.key = k; SORT.dir = 1; }
+      render();
+    };
+  });
+
+  // Filter bindings
+  document.getElementById('search').oninput = render;
+  document.getElementById('filter-sev').onchange = render;
+  document.getElementById('filter-cat').onchange = render;
+
+  load();
+</script>
+</body>
+</html>
