@@ -1,6 +1,6 @@
 [package]
 name = "cyweb"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 authors = ["Cybrium AI <hello@cybrium.ai>"]
 description = "Fast, accurate web vulnerability scanner. Scans headers, paths, server configs, and known vulnerabilities."
@@ -34,6 +34,14 @@ rand = "0.8"
 dirs = "5"
 hex = "0.4"
 walkdir = "2"
+# v0.8.2 — DSL helpers for the templates engine. Upstream community
+# templates use md5/sha1/sha256/base64/url_encode in their `dsl:`
+# matcher expressions; cyweb's evaluator now supports them so those
+# templates convert and run cleanly.
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+urlencoding = "2"
 # Sprint 76 Phase 7 — WebSocket hijacking. tokio-tungstenite is the
 # canonical async WS client; rustls-tls-native-roots matches reqwest's
 # rustls feature so we don't drag in OpenSSL.
