@@ -31,6 +31,9 @@ mod protocol_runners;
 mod interactsh;
 // v0.8.6 — Two-axis tuning taxonomy (phase + vulnerability class).
 mod tuning;
+// v0.8.6 — Session re-login monitor (detects 401/redirect/sentinel,
+// replays auth, retries the request).
+mod session;
 // Sprint 76 — modern vuln classes that need Rust runtime extensions.
 // race needs concurrent-burst orchestration; websocket needs a WS client.
 mod race;
@@ -142,6 +145,25 @@ enum Commands {
         /// Form login: explicit login page URL (optional, auto-discovered if omitted)
         #[arg(long)]
         login_url: Option<String>,
+
+        /// v0.8.6 — Maximum re-login attempts when the target
+        /// invalidates the session mid-scan. Set to 0 to disable
+        /// re-login (legacy v0.8.5 behaviour). Default: 3.
+        #[arg(long, default_value = "3")]
+        session_max_relogins: usize,
+
+        /// v0.8.6 — Regex matched against redirect Location headers
+        /// to detect "kicked back to login" responses. By default
+        /// cyweb checks for the substrings "login", "signin", "auth"
+        /// — set this when your IdP uses a non-obvious URL pattern.
+        #[arg(long)]
+        session_expired_pattern: Option<String>,
+
+        /// v0.8.6 — Extra body-substring sentinels (comma-separated)
+        /// that indicate session expiry. Merged with built-in
+        /// defaults ("session expired", "please log in", etc.).
+        #[arg(long)]
+        session_expired_sentinel: Option<String>,
 
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
@@ -324,6 +346,13 @@ async fn main() {
             gui,
             gui_port,
             ajax_spider,
+            // v0.8.6 — flags consumed via session.rs after form_login
+            // succeeds. The values are stashed onto SessionConfig in
+            // scanner.rs; main.rs just propagates them through
+            // ScanConfig (added below).
+            session_max_relogins,
+            session_expired_pattern,
+            session_expired_sentinel,
         } => {
             print_banner();
 
@@ -362,6 +391,9 @@ async fn main() {
                 payloads_dir: payloads,
                 templates_dir: templates,
                 ajax_spider,
+                session_max_relogins,
+                session_expired_pattern: session_expired_pattern.clone(),
+                session_expired_sentinel: session_expired_sentinel.clone(),
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies

@@ -42,6 +42,14 @@ pub struct ScanConfig {
     pub templates_dir: Option<String>,
     /// v0.8 Phase N — opt-in headless-Chromium crawl for JS SPAs.
     pub ajax_spider: bool,
+    /// v0.8.6 — Session re-login config. Active only when form-login
+    /// flags are also set; otherwise has no effect.
+    #[allow(dead_code)] // wired via SessionMonitor in upcoming patch to scanner.rs request paths
+    pub session_max_relogins: usize,
+    #[allow(dead_code)]
+    pub session_expired_pattern: Option<String>,
+    #[allow(dead_code)]
+    pub session_expired_sentinel: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
