@@ -2,7 +2,7 @@
 //! crawled pages without making additional requests beyond what the
 //! spider already did.
 //!
-//! Currently covers two ZAP-parity checks:
+//! Currently covers two passive checks:
 //!
 //!   - **Anti-CSRF token detection**: every `<form method="post">` (or
 //!     PUT/DELETE/PATCH) should carry a CSRF/anti-forgery token, either
@@ -15,9 +15,9 @@
 //!     substitute hostile JS/CSS. Same-origin sub-resources are exempt
 //!     (no MITM threat model).
 //!
-//! Maps to ZAP rules:
-//!   - 10202 "Absence of Anti-CSRF Tokens"  (CWE-352)
-//!   - 90003 "Sub Resource Integrity Attribute Missing" (CWE-345)
+//! Standard CWE coverage:
+//!   - CWE-352 "Cross-Site Request Forgery"
+//!   - CWE-345 "Insufficient Verification of Data Authenticity" (SRI)
 //!
 //! Both are passive — we only inspect responses already fetched by the
 //! spider phase.

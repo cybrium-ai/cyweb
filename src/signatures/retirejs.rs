@@ -15,8 +15,8 @@
 //!   - hashes  (full file SHA256 lookup against retire.js cdnjs hashes)
 //!   - func patterns  (require executing JS in a runtime)
 //!
-//! Maps to ZAP rule 10003 "Vulnerable JS Library" (CWE-1395 /
-//! historically CWE-829).
+//! Standard "Vulnerable JS Library" coverage. CWE-1395 (Vulnerable
+//! Third-Party Component) / historically CWE-829.
 
 use super::{Finding, Severity};
 use regex::Regex;

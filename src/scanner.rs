@@ -61,9 +61,9 @@ pub struct ScanResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spider_nodes: Vec<crate::crawler::CrawledNode>,
     /// v0.8 Phase G — timestamped log of every active-scan request
-    /// (i.e. requests sent from the fuzz phase). Mirrors ZAP's
-    /// "Active Scan → Sent Messages" pane: ID, method, URL, status,
-    /// RTT, response size. Empty when --fuzz wasn't enabled.
+    /// (i.e. requests sent from the fuzz phase). Standard active-scan
+    /// transaction log: ID, method, URL, status, RTT, response size.
+    /// Empty when --fuzz wasn't enabled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub http_events: Vec<HttpEvent>,
     /// v0.8 Phase J — chronological log of every phase-progress
@@ -73,9 +73,9 @@ pub struct ScanResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub log_lines: Vec<LogLine>,
     /// v0.8 Phase O — per-rule rollup of the active scan.
-    /// One row per fuzz payload set / signature rule. Mirrors ZAP's
-    /// "Active Scan Progress" pane — operator can see which rule was
-    /// slow, which raised alerts, which produced no traffic.
+    /// One row per fuzz payload set / signature rule. Lets the
+    /// operator see which rule was slow, which raised alerts, which
+    /// produced no traffic.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_stats: Vec<RuleStat>,
 }
@@ -548,7 +548,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // Phase 8.7: Vulnerable JS library scan (retire.js DB matching).
     // Walks every crawled HTML page, extracts <script src=> URLs, and
     // matches each against bundled retire.js patterns. Emits one
-    // finding per (library, version, advisory) tuple — ZAP rule 10003.
+    // finding per (library, version, advisory) tuple.
     if run_phase("retirejs") {
         eprintln!("{}", "Phase 8.7: Vulnerable JS library scan...".cyan());
         let retire_findings =
@@ -615,8 +615,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // Phase 12: Active fuzzing — context-aware, YAML-driven.
     // v0.8 Phase G — fuzz now also emits a list of HttpEvent rows
     // (timestamped request log) so the GUI's Active Scan tab can
-    // render the same view ZAP shows in its "Active Scan → Sent
-    // Messages" pane.
+    // render an active-scan transaction log.
     let mut fuzz_events: Vec<HttpEvent> = Vec::new();
     if config.fuzz_enabled && run_phase("fuzz") {
         eprintln!(
@@ -695,7 +694,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
 
     // Phase H — for each spider node, surface the highest-severity
     // finding raised on its URL. Lets the GUI's Spider tab show a
-    // "Highest Alert" column matching ZAP. Severity rank: critical >
+    // "Highest Alert" column. Severity rank: critical >
     // high > medium > low > info.
     fn sev_rank(s: &Severity) -> u8 {
         match s {
@@ -755,8 +754,8 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
                 status: "ok".into(),
             });
         }
-        // Sort by findings desc, then requests desc — same default ZAP
-        // shows.
+        // Sort by findings desc, then requests desc — most useful
+        // default for triage.
         rule_stats.sort_by(|a, b| {
             b.findings.cmp(&a.findings)
                 .then(b.requests.cmp(&a.requests))
