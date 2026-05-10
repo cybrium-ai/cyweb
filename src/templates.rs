@@ -178,16 +178,49 @@ pub struct TcpStep {
 
 pub fn load_templates(extra_dir: Option<&str>) -> Vec<Template> {
     let mut templates = Vec::new();
+    let mut sources: Vec<(String, usize)> = Vec::new();
 
-    // Load from ~/.cyweb/templates/
-    if let Some(home) = dirs::home_dir() {
-        let tpl_dir = home.join(".cyweb").join("templates");
-        templates.extend(load_from_dir(&tpl_dir));
+    // Sprint v0.8.1 — image-baked templates take precedence. The
+    // release image ships pre-converted templates at
+    // /opt/cyweb/templates/ (refreshed by the nightly CI conversion
+    // job — see .github/workflows/refresh-templates.yml). Operators
+    // running cyweb from the binary can override the path via the
+    // CYWEB_TEMPLATES_DIR env var, which lets a CI runner point at
+    // a freshly-converted set without rebuilding the image.
+    let bundled_dir = std::env::var("CYWEB_TEMPLATES_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/opt/cyweb/templates"));
+    if bundled_dir.exists() {
+        let before = templates.len();
+        templates.extend(load_from_dir(&bundled_dir));
+        sources.push((bundled_dir.display().to_string(), templates.len() - before));
     }
 
-    // Load from custom directory
+    // Operator-local templates override / supplement the image-baked
+    // set. Same-id templates win for whichever source loads last;
+    // we load the local set after the bundled one so a hand-edited
+    // override takes precedence over the upstream-converted version.
+    if let Some(home) = dirs::home_dir() {
+        let tpl_dir = home.join(".cyweb").join("templates");
+        if tpl_dir.exists() {
+            let before = templates.len();
+            templates.extend(load_from_dir(&tpl_dir));
+            sources.push((tpl_dir.display().to_string(), templates.len() - before));
+        }
+    }
+
+    // --templates flag — explicit path. Loaded last, wins ties.
     if let Some(dir) = extra_dir {
+        let before = templates.len();
         templates.extend(load_from_dir(std::path::Path::new(dir)));
+        sources.push((dir.to_string(), templates.len() - before));
+    }
+
+    if !sources.is_empty() {
+        eprintln!("  Loaded {} templates from:", templates.len());
+        for (src, count) in &sources {
+            eprintln!("    - {}  ({} templates)", src, count);
+        }
     }
 
     templates

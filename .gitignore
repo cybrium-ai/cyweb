@@ -2,3 +2,10 @@
 *.swp
 *.swo
 .DS_Store
+
+# v0.8.1 — release CI generates these from the upstream community
+# template repo and copies them into the docker image. They never
+# get committed to git.
+/templates-converted/
+/cyweb-linux-amd64
+/cyweb-linux-arm64

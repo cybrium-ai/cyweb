@@ -42,8 +42,17 @@ RUN chmod +x /usr/local/bin/cyweb \
 COPY payloads /opt/cyweb/payloads
 COPY rules    /opt/cyweb/rules
 
+# Sprint v0.8.1 — image-baked converted templates. Populated at
+# release time by the upstream-templates conversion step in
+# release.yml (which runs `cyweb convert-templates` against the
+# projectdiscovery/nuclei-templates community repo). Build context
+# always includes a `templates-converted/` directory; even when
+# empty, the COPY below is a no-op rather than a failure.
+COPY templates-converted /opt/cyweb/templates
+
 ENV CYWEB_PAYLOADS_DIR=/opt/cyweb/payloads \
-    CYWEB_RULES_DIR=/opt/cyweb/rules
+    CYWEB_RULES_DIR=/opt/cyweb/rules \
+    CYWEB_TEMPLATES_DIR=/opt/cyweb/templates
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cyweb"]
 CMD ["--help"]
