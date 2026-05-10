@@ -260,7 +260,21 @@ Add a session-monitor middleware to the HTTP client:
   - 3-attempt cap fires Info finding
   - heuristic disabled when no form-login → no-op
 
-### Acceptance
+### Acceptance (v0.8.6 PR scope — what ships now)
+- `src/session.rs` module landed with `SessionMonitor`,
+  `SessionConfig`, `request_with_relogin`, `body_indicates_expired`,
+  full unit-test coverage of expiry-signal heuristics.
+- 3 CLI flags: `--session-max-relogins`, `--session-expired-pattern`,
+  `--session-expired-sentinel`.
+- Fields propagated through `ScanConfig`.
+
+### Deferred to v0.8.7 (call-site sweep)
+The wide refactor — switching every `client.get(...).send()` site
+across `scanner.rs` and `signatures/*.rs` (~30 sites) to
+`monitor.request_with_relogin(|c| c.get(url))` — is mechanical but
+wide. Splitting that into its own PR keeps v0.8.6's blast radius
+manageable. Once the sweep lands, the acceptance criteria become:
+
 - Run cyweb against a deliberately-short-session test app (Django
   with `SESSION_COOKIE_AGE=60`); scan continues past the 60s mark
   with auth-gated routes still being scanned authenticated.
