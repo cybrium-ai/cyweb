@@ -33,6 +33,7 @@
   }
   a { color: var(--primary-2); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, monospace; font-size: 12px; }
 
   /* ── Header bar ────────────────────────────────────────────────────────── */
   header {
@@ -58,19 +59,18 @@
     transition: all 120ms;
   }
   button:hover { border-color: var(--primary); color: var(--primary-2); }
-  button.primary { background: var(--primary); border-color: var(--primary); color: white; }
-  button.primary:hover { background: var(--primary-2); }
 
   /* ── Layout ────────────────────────────────────────────────────────────── */
   main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
 
   /* ── Severity tile row ─────────────────────────────────────────────────── */
-  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
   .tile {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 16px 18px;
+    border-radius: 10px; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 4px;
     position: relative; overflow: hidden;
+    cursor: pointer;
   }
   .tile::before {
     content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
@@ -82,13 +82,37 @@
   .tile.low::before      { background: var(--sev-low); }
   .tile.info::before     { background: var(--sev-info); }
   .tile .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .tile .count { font-size: 28px; font-weight: 700; }
+  .tile .count { font-size: 24px; font-weight: 700; }
+
+  /* ── Tab strip ─────────────────────────────────────────────────────────── */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 10px 18px; cursor: pointer; color: var(--muted);
+    font-size: 14px; font-weight: 500;
+    transition: all 120ms;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--primary-2); border-bottom-color: var(--primary); }
+  .tab .badge {
+    display: inline-block; margin-left: 6px;
+    background: var(--surface-2); color: var(--muted);
+    border-radius: 99px; padding: 1px 7px;
+    font-size: 11px; font-weight: 600;
+  }
+  .tab.active .badge { background: var(--primary); color: white; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
 
   /* ── Filter bar ────────────────────────────────────────────────────────── */
   .filters {
     display: flex; gap: 12px; align-items: center; margin-bottom: 14px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 10px 14px;
+    border-radius: 10px; padding: 10px 14px; flex-wrap: wrap;
   }
   .filters input, .filters select {
     background: var(--surface-2); color: var(--text);
@@ -97,8 +121,9 @@
   }
   .filters input { flex: 1; min-width: 200px; }
   .filters input:focus, .filters select:focus { border-color: var(--primary); }
+  .count-pill { color: var(--muted); font-size: 12px; }
 
-  /* ── Findings table ────────────────────────────────────────────────────── */
+  /* ── Tables ────────────────────────────────────────────────────────────── */
   .table-wrap {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 10px; overflow: hidden;
@@ -109,15 +134,17 @@
     text-align: left; font-size: 11px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.05em;
     padding: 10px 14px; border-bottom: 1px solid var(--border);
-    cursor: pointer; user-select: none;
+    cursor: pointer; user-select: none; white-space: nowrap;
   }
   th:hover { color: var(--primary-2); }
   td {
-    padding: 12px 14px; border-bottom: 1px solid var(--border);
-    vertical-align: top;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top; font-size: 13px;
   }
   tr:hover td { background: rgba(151, 71, 255, 0.04); cursor: pointer; }
-  tr.expanded td { background: rgba(151, 71, 255, 0.08); }
+
+  .url-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cwe-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
 
   /* Severity pill */
   .sev {
@@ -131,21 +158,75 @@
   .sev.low      { background: color-mix(in srgb, var(--sev-low)      18%, transparent); color: var(--sev-low);      border: 1px solid color-mix(in srgb, var(--sev-low)      40%, transparent); }
   .sev.info     { background: color-mix(in srgb, var(--sev-info)     18%, transparent); color: var(--sev-info);     border: 1px solid color-mix(in srgb, var(--sev-info)     40%, transparent); }
 
-  .url-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cwe-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
+  .scope {
+    display: inline-block; padding: 1px 8px; border-radius: 99px;
+    font-size: 10px; font-weight: 600;
+  }
+  .scope.in     { background: color-mix(in srgb, #16a34a 16%, transparent); color: #4ade80; }
+  .scope.out    { background: color-mix(in srgb, #f97316 16%, transparent); color: #fb923c; }
 
-  /* Detail row (expanded) */
-  .detail-row td {
-    background: #0e0e18 !important;
-    padding: 18px 24px; border-left: 3px solid var(--primary);
+  .method {
+    display: inline-block; min-width: 56px; text-align: center;
+    padding: 1px 8px; border-radius: 4px;
+    font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
+    background: var(--surface-2); border: 1px solid var(--border);
   }
-  .detail-grid {
+  .method.POST   { color: #f59e0b; border-color: #f59e0b; }
+  .method.PUT    { color: #06b6d4; border-color: #06b6d4; }
+  .method.DELETE { color: #dc2626; border-color: #dc2626; }
+  .method.PATCH  { color: #8b5cf6; border-color: #8b5cf6; }
+
+  .status-cell { font-family: ui-monospace, monospace; font-size: 12px; }
+  .status-2xx { color: #22c55e; }
+  .status-3xx { color: #06b6d4; }
+  .status-4xx { color: #f97316; }
+  .status-5xx { color: #dc2626; }
+
+  /* ── Alerts tree (Phase F) ─────────────────────────────────────────────── */
+  .alert-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .alert-group-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; cursor: pointer;
+    background: var(--surface-2);
+  }
+  .alert-group-header:hover { background: rgba(151, 71, 255, 0.07); }
+  .alert-group .triangle {
+    display: inline-block; width: 10px; transition: transform 120ms;
+    color: var(--muted);
+  }
+  .alert-group.open .triangle { transform: rotate(90deg); }
+  .alert-group-title { font-weight: 500; flex: 1; }
+  .alert-count {
+    color: var(--muted); font-size: 12px;
+    background: var(--surface); border-radius: 99px; padding: 1px 8px;
+  }
+  .alert-instances { display: none; padding: 0; }
+  .alert-group.open .alert-instances { display: block; }
+  .alert-instance {
+    padding: 10px 14px 10px 32px;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .alert-instance:hover { background: rgba(151, 71, 255, 0.04); }
+  .alert-instance .url-cell { display: block; }
+  .alert-detail {
+    display: none;
+    padding: 16px 24px;
+    background: #0e0e18;
+    border-top: 1px solid var(--primary);
+  }
+  .alert-instance.expanded + .alert-detail { display: block; }
+  .alert-detail dl {
     display: grid; grid-template-columns: 120px 1fr; gap: 8px 18px;
-    font-size: 13px;
+    font-size: 13px; margin: 0;
   }
-  .detail-grid dt { color: var(--muted); font-weight: 500; }
-  .detail-grid dd { margin: 0; word-break: break-word; }
-  .detail-grid pre {
+  .alert-detail dt { color: var(--muted); font-weight: 500; }
+  .alert-detail dd { margin: 0; word-break: break-word; }
+  .alert-detail pre {
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 6px; padding: 10px 12px; margin: 0;
     font-size: 12px; overflow-x: auto;
@@ -166,7 +247,7 @@
 
 <header>
   <img src="/logo.svg" alt="Cybrium"/>
-  <span class="title">cyweb findings</span>
+  <span class="title">cyweb</span>
   <span class="target" id="target-host">—</span>
   <span class="meta" id="scan-meta"></span>
   <div class="export-group">
@@ -180,35 +261,112 @@
 
   <div class="tiles" id="tiles"></div>
 
-  <div class="filters">
-    <input id="search" type="search" placeholder="Search title, URL, CWE, evidence…" autofocus>
-    <select id="filter-sev">
-      <option value="">All severities</option>
-      <option value="critical">Critical</option>
-      <option value="high">High</option>
-      <option value="medium">Medium</option>
-      <option value="low">Low</option>
-      <option value="info">Info</option>
-    </select>
-    <select id="filter-cat">
-      <option value="">All categories</option>
-    </select>
-    <span style="color: var(--muted); font-size: 12px;" id="filter-count"></span>
+  <div class="tabs">
+    <button class="tab active"  data-panel="alerts">Alerts <span class="badge" id="b-alerts">0</span></button>
+    <button class="tab"          data-panel="spider">Spider <span class="badge" id="b-spider">0</span></button>
+    <button class="tab"          data-panel="active">Active Scan <span class="badge" id="b-active">0</span></button>
   </div>
 
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th data-sort="severity">Severity</th>
-          <th data-sort="title">Title</th>
-          <th data-sort="url">URL</th>
-          <th data-sort="cwe">CWE</th>
-          <th data-sort="category">Category</th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
+  <!-- ─── Alerts panel (Phase F — tree grouped) ───────────────────────── -->
+  <div class="panel active" id="p-alerts">
+    <div class="filters">
+      <input id="alert-search" type="search" placeholder="Search title, URL, CWE, evidence…" autofocus>
+      <select id="alert-sev">
+        <option value="">All severities</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+        <option value="info">Info</option>
+      </select>
+      <span class="count-pill" id="alert-count"></span>
+    </div>
+    <div id="alert-groups"></div>
+  </div>
+
+  <!-- ─── Spider panel (Phase E) ─────────────────────────────────────── -->
+  <div class="panel" id="p-spider">
+    <div class="filters">
+      <input id="spider-search" type="search" placeholder="Search URL…">
+      <select id="spider-scope">
+        <option value="">All scope</option>
+        <option value="in">In scope</option>
+        <option value="out">Out of scope</option>
+      </select>
+      <select id="spider-method">
+        <option value="">All methods</option>
+        <option value="GET">GET</option>
+        <option value="POST">POST</option>
+        <option value="PUT">PUT</option>
+        <option value="PATCH">PATCH</option>
+        <option value="DELETE">DELETE</option>
+      </select>
+      <select id="spider-source">
+        <option value="">All sources</option>
+        <option value="target">Target</option>
+        <option value="robots">robots.txt</option>
+        <option value="sitemap">sitemap.xml</option>
+        <option value="link">Link</option>
+        <option value="form">Form</option>
+      </select>
+      <span class="count-pill" id="spider-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="processed">●</th>
+            <th data-sort="method">Method</th>
+            <th data-sort="url">URI</th>
+            <th data-sort="status_code">Code</th>
+            <th data-sort="seed_source">Source</th>
+            <th data-sort="in_scope">Flags</th>
+          </tr>
+        </thead>
+        <tbody id="spider-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ─── Active Scan panel (Phase G — Sent Messages) ────────────────── -->
+  <div class="panel" id="p-active">
+    <div class="filters">
+      <input id="active-search" type="search" placeholder="Search URL or source…">
+      <select id="active-method">
+        <option value="">All methods</option>
+        <option value="GET">GET</option>
+        <option value="POST">POST</option>
+        <option value="PUT">PUT</option>
+        <option value="PATCH">PATCH</option>
+        <option value="DELETE">DELETE</option>
+      </select>
+      <select id="active-status">
+        <option value="">All statuses</option>
+        <option value="2">2xx</option>
+        <option value="3">3xx</option>
+        <option value="4">4xx</option>
+        <option value="5">5xx</option>
+      </select>
+      <span class="count-pill" id="active-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="id">ID</th>
+            <th data-sort="sent_at">Sent</th>
+            <th data-sort="method">Method</th>
+            <th data-sort="url">URL</th>
+            <th data-sort="status">Code</th>
+            <th data-sort="reason">Reason</th>
+            <th data-sort="rtt_ms">RTT</th>
+            <th data-sort="resp_size">Size</th>
+            <th data-sort="source">Source</th>
+          </tr>
+        </thead>
+        <tbody id="active-rows"></tbody>
+      </table>
+    </div>
   </div>
 
 </main>
@@ -220,25 +378,42 @@
 <script>
   const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   let DATA = null;
-  let SORT = { key: 'severity', dir: 1 };
-  let EXPANDED = new Set();
+  let ACTIVE_TAB = 'alerts';
+  let SORT = { spider: { key: 'method', dir: 1 }, active: { key: 'id', dir: 1 } };
+  let EXPANDED_GROUPS = new Set();
+  let EXPANDED_INSTANCES = new Set();
 
   function sevName(s) {
     if (typeof s === 'string') return s.toLowerCase();
     if (s && typeof s === 'object') return Object.keys(s)[0]?.toLowerCase() || 'info';
     return 'info';
   }
+  function escape(s) {
+    return String(s ?? '').replace(/[&<>"']/g, ch => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[ch]));
+  }
 
   async function load() {
     const res = await fetch('/api/result');
     DATA = await res.json();
+    DATA.spider_nodes = DATA.spider_nodes || [];
+    DATA.http_events  = DATA.http_events  || [];
+
     document.getElementById('target-host').textContent = DATA.target;
     const dur = (DATA.duration_ms / 1000).toFixed(1);
     document.getElementById('scan-meta').textContent =
-      `${DATA.findings.length} findings · ${dur}s · ${DATA.summary.requests_made} requests`;
+      `${DATA.findings.length} alerts · ${DATA.spider_nodes.length} spider nodes · ` +
+      `${DATA.http_events.length} active-scan req · ${dur}s`;
+
+    document.getElementById('b-alerts').textContent = DATA.findings.length;
+    document.getElementById('b-spider').textContent = DATA.spider_nodes.length;
+    document.getElementById('b-active').textContent = DATA.http_events.length;
+
     renderTiles();
-    populateCategories();
-    render();
+    renderAlerts();
+    renderSpider();
+    renderActive();
   }
 
   function renderTiles() {
@@ -251,38 +426,21 @@
     `).join('');
     document.getElementById('tiles').innerHTML = html;
     document.querySelectorAll('.tile').forEach(el => {
-      el.style.cursor = 'pointer';
       el.onclick = () => {
-        document.getElementById('filter-sev').value = el.dataset.sev;
-        render();
+        switchTab('alerts');
+        document.getElementById('alert-sev').value = el.dataset.sev;
+        renderAlerts();
       };
     });
   }
 
-  function populateCategories() {
-    const cats = [...new Set(DATA.findings.map(f => f.category))].sort();
-    const sel = document.getElementById('filter-cat');
-    cats.forEach(c => {
-      const o = document.createElement('option');
-      o.value = c; o.textContent = c;
-      sel.appendChild(o);
-    });
-  }
-
-  function escape(s) {
-    return String(s ?? '').replace(/[&<>"']/g, ch => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[ch]));
-  }
-
-  function filtered() {
-    const q = document.getElementById('search').value.toLowerCase();
-    const sev = document.getElementById('filter-sev').value;
-    const cat = document.getElementById('filter-cat').value;
+  /* ── Alerts (Phase F — tree-grouped) ────────────────────────────────── */
+  function filteredAlerts() {
+    const q = document.getElementById('alert-search').value.toLowerCase();
+    const sev = document.getElementById('alert-sev').value;
     return DATA.findings.filter(f => {
       const fsev = sevName(f.severity);
       if (sev && fsev !== sev) return false;
-      if (cat && f.category !== cat) return false;
       if (q) {
         const hay = `${f.title} ${f.url} ${f.cwe ?? ''} ${f.evidence ?? ''} ${f.description}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -291,84 +449,230 @@
     });
   }
 
-  function sortFindings(arr) {
-    const k = SORT.key, dir = SORT.dir;
-    return arr.slice().sort((a, b) => {
-      let av, bv;
-      if (k === 'severity') {
-        av = SEV_ORDER[sevName(a.severity)] ?? 9;
-        bv = SEV_ORDER[sevName(b.severity)] ?? 9;
-      } else {
-        av = (a[k] ?? '').toString().toLowerCase();
-        bv = (b[k] ?? '').toString().toLowerCase();
-      }
-      if (av < bv) return -1 * dir;
-      if (av > bv) return  1 * dir;
-      return 0;
-    });
-  }
+  function renderAlerts() {
+    const items = filteredAlerts();
+    document.getElementById('alert-count').textContent =
+      `${items.length} of ${DATA.findings.length} alerts`;
 
-  function render() {
-    const rows = document.getElementById('rows');
-    const items = sortFindings(filtered());
-    document.getElementById('filter-count').textContent =
-      `${items.length} of ${DATA.findings.length} findings`;
-    if (items.length === 0) {
-      rows.innerHTML = `<tr><td colspan="5" class="empty">No findings match the current filters.</td></tr>`;
+    // Group by title
+    const groups = new Map();
+    for (const f of items) {
+      if (!groups.has(f.title)) groups.set(f.title, []);
+      groups.get(f.title).push(f);
+    }
+    // Sort groups by max severity then title
+    const ordered = [...groups.entries()].sort((a, b) => {
+      const av = Math.min(...a[1].map(f => SEV_ORDER[sevName(f.severity)] ?? 9));
+      const bv = Math.min(...b[1].map(f => SEV_ORDER[sevName(f.severity)] ?? 9));
+      if (av !== bv) return av - bv;
+      return a[0].localeCompare(b[0]);
+    });
+
+    const wrap = document.getElementById('alert-groups');
+    if (ordered.length === 0) {
+      wrap.innerHTML = `<div class="empty">No alerts match the current filters.</div>`;
       return;
     }
-    rows.innerHTML = items.map((f, i) => {
-      const sev = sevName(f.severity);
-      const isOpen = EXPANDED.has(rowKey(f));
-      const main = `
-        <tr class="${isOpen ? 'expanded' : ''}" data-key="${escape(rowKey(f))}">
-          <td><span class="sev ${sev}">${sev}</span></td>
-          <td><strong>${escape(f.title)}</strong></td>
-          <td class="url-cell" title="${escape(f.url)}">${escape(f.url)}</td>
-          <td class="cwe-cell">${escape(f.cwe ?? '—')}</td>
-          <td>${escape(f.category)}</td>
-        </tr>
-      `;
-      if (!isOpen) return main;
-      return main + `
-        <tr class="detail-row">
-          <td colspan="5">
-            <dl class="detail-grid">
-              <dt>Description</dt><dd>${escape(f.description)}</dd>
-              ${f.evidence ? `<dt>Evidence</dt><dd><pre>${escape(f.evidence)}</pre></dd>` : ''}
-              ${f.remediation ? `<dt>Remediation</dt><dd>${escape(f.remediation)}</dd>` : ''}
-              <dt>Rule ID</dt><dd><code>${escape(f.id)}</code></dd>
-              ${f.vuln_class ? `<dt>Vuln class</dt><dd><code>${escape(f.vuln_class)}</code></dd>` : ''}
-            </dl>
-          </td>
-        </tr>
+    wrap.innerHTML = ordered.map(([title, instances]) => {
+      const sev = sevName(instances[0].severity);
+      const isOpen = EXPANDED_GROUPS.has(title);
+      const cnt = instances.length;
+      return `
+        <div class="alert-group ${isOpen ? 'open' : ''}" data-group="${escape(title)}">
+          <div class="alert-group-header">
+            <span class="triangle">▶</span>
+            <span class="sev ${sev}">${sev}</span>
+            <span class="alert-group-title">${escape(title)}</span>
+            <span class="alert-count">${cnt}</span>
+          </div>
+          <div class="alert-instances">
+            ${instances.map((f, i) => {
+              const ikey = title + '|' + i;
+              const expanded = EXPANDED_INSTANCES.has(ikey);
+              return `
+                <div class="alert-instance ${expanded ? 'expanded' : ''}" data-ikey="${escape(ikey)}">
+                  <span class="method ${escape(f.http_method || 'GET')}">${escape(f.http_method || 'GET')}</span>
+                  <span class="url-cell" title="${escape(f.url)}">${escape(f.url)}</span>
+                </div>
+                <div class="alert-detail" data-detail="${escape(ikey)}" style="${expanded ? '' : 'display:none'}">
+                  <dl>
+                    <dt>URL</dt><dd><code>${escape(f.url)}</code></dd>
+                    ${f.cwe ? `<dt>CWE</dt><dd><code>${escape(f.cwe)}</code></dd>` : ''}
+                    <dt>Category</dt><dd>${escape(f.category)}</dd>
+                    ${f.confidence != null ? `<dt>Confidence</dt><dd>${escape(f.confidence)}</dd>` : ''}
+                    <dt>Description</dt><dd>${escape(f.description)}</dd>
+                    ${f.evidence ? `<dt>Evidence</dt><dd><pre>${escape(f.evidence)}</pre></dd>` : ''}
+                    ${f.remediation ? `<dt>Solution</dt><dd>${escape(f.remediation)}</dd>` : ''}
+                    <dt>Rule ID</dt><dd><code>${escape(f.id)}</code></dd>
+                    ${f.vuln_class ? `<dt>Vuln class</dt><dd><code>${escape(f.vuln_class)}</code></dd>` : ''}
+                  </dl>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
       `;
     }).join('');
-    rows.querySelectorAll('tr[data-key]').forEach(tr => {
-      tr.onclick = () => {
-        const k = tr.dataset.key;
-        if (EXPANDED.has(k)) EXPANDED.delete(k); else EXPANDED.add(k);
-        render();
+
+    // Wire group toggle
+    wrap.querySelectorAll('.alert-group-header').forEach(el => {
+      el.onclick = () => {
+        const g = el.parentElement.dataset.group;
+        if (EXPANDED_GROUPS.has(g)) EXPANDED_GROUPS.delete(g);
+        else EXPANDED_GROUPS.add(g);
+        renderAlerts();
+      };
+    });
+    // Wire instance toggle
+    wrap.querySelectorAll('.alert-instance').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const k = el.dataset.ikey;
+        if (EXPANDED_INSTANCES.has(k)) EXPANDED_INSTANCES.delete(k);
+        else EXPANDED_INSTANCES.add(k);
+        renderAlerts();
       };
     });
   }
 
-  function rowKey(f) { return `${f.id}|${f.url}`; }
+  /* ── Spider (Phase E) ───────────────────────────────────────────────── */
+  function renderSpider() {
+    const q   = document.getElementById('spider-search').value.toLowerCase();
+    const sc  = document.getElementById('spider-scope').value;
+    const m   = document.getElementById('spider-method').value;
+    const src = document.getElementById('spider-source').value;
+    let nodes = DATA.spider_nodes.filter(n => {
+      if (sc === 'in'  && !n.in_scope) return false;
+      if (sc === 'out' &&  n.in_scope) return false;
+      if (m && n.method !== m)         return false;
+      if (src && n.seed_source !== src) return false;
+      if (q && !n.url.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    // Sort
+    const { key, dir } = SORT.spider;
+    nodes = nodes.slice().sort((a, b) => {
+      const av = a[key] ?? '', bv = b[key] ?? '';
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+    document.getElementById('spider-count').textContent =
+      `${nodes.length} of ${DATA.spider_nodes.length} nodes`;
+    const tbody = document.getElementById('spider-rows');
+    if (nodes.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No spider nodes match.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = nodes.map(n => {
+      const dot = n.processed ? '🟢' : (n.in_scope ? '⚪' : '🔴');
+      const status = n.status_code ? `<span class="status-cell status-${Math.floor(n.status_code/100)}xx">${n.status_code}</span>` : '<span class="status-cell" style="color:var(--muted)">—</span>';
+      const flag = n.in_scope ? '<span class="scope in">In scope</span>' : '<span class="scope out">Out of scope</span>';
+      return `
+        <tr>
+          <td>${dot}</td>
+          <td><span class="method ${escape(n.method)}">${escape(n.method)}</span></td>
+          <td class="url-cell" title="${escape(n.url)}">${escape(n.url)}</td>
+          <td>${status}</td>
+          <td><span style="color:var(--muted);font-size:12px">${escape(n.seed_source)}</span></td>
+          <td>${flag}</td>
+        </tr>
+      `;
+    }).join('');
+  }
 
-  // Sort header click
-  document.querySelectorAll('th[data-sort]').forEach(th => {
-    th.onclick = () => {
-      const k = th.dataset.sort;
-      if (SORT.key === k) SORT.dir = -SORT.dir;
-      else { SORT.key = k; SORT.dir = 1; }
-      render();
-    };
+  /* ── Active Scan (Phase G — Sent Messages) ──────────────────────────── */
+  function renderActive() {
+    const q = document.getElementById('active-search').value.toLowerCase();
+    const m = document.getElementById('active-method').value;
+    const sFilter = document.getElementById('active-status').value;
+    let evts = DATA.http_events.filter(e => {
+      if (m && e.method !== m) return false;
+      if (sFilter && Math.floor(e.status / 100) !== Number(sFilter)) return false;
+      if (q) {
+        const hay = `${e.url} ${e.source}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const { key, dir } = SORT.active;
+    evts = evts.slice().sort((a, b) => {
+      const av = a[key] ?? '', bv = b[key] ?? '';
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+    document.getElementById('active-count').textContent =
+      `${evts.length} of ${DATA.http_events.length} requests`;
+    const tbody = document.getElementById('active-rows');
+    if (evts.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">No active-scan requests recorded. Run cyweb with --fuzz to populate.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = evts.map(e => {
+      const ts = e.sent_at.split('T')[1]?.split('.')[0] ?? e.sent_at;
+      const cls = `status-${Math.floor(e.status/100)}xx`;
+      return `
+        <tr>
+          <td><code>${e.id}</code></td>
+          <td><code style="color:var(--muted)">${escape(ts)}</code></td>
+          <td><span class="method ${escape(e.method)}">${escape(e.method)}</span></td>
+          <td class="url-cell" title="${escape(e.url)}">${escape(e.url)}</td>
+          <td class="status-cell ${cls}">${e.status}</td>
+          <td style="color:var(--muted);font-size:12px">${escape(e.reason)}</td>
+          <td><code>${e.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(e.resp_size)}</code></td>
+          <td><code style="color:var(--accent);font-size:11px">${escape(e.source)}</code></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + 'B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'K';
+    return (n / 1024 / 1024).toFixed(1) + 'M';
+  }
+
+  /* ── Tab switching ──────────────────────────────────────────────────── */
+  function switchTab(panel) {
+    ACTIVE_TAB = panel;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + panel));
+  }
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.panel));
+
+  /* ── Filter bindings ────────────────────────────────────────────────── */
+  ['alert-search','alert-sev'].forEach(id => document.getElementById(id).addEventListener('input', renderAlerts));
+  document.getElementById('alert-sev').addEventListener('change', renderAlerts);
+  ['spider-search','spider-scope','spider-method','spider-source'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderSpider);
+    el.addEventListener('change', renderSpider);
+  });
+  ['active-search','active-method','active-status'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderActive);
+    el.addEventListener('change', renderActive);
   });
 
-  // Filter bindings
-  document.getElementById('search').oninput = render;
-  document.getElementById('filter-sev').onchange = render;
-  document.getElementById('filter-cat').onchange = render;
+  /* ── Sort headers ───────────────────────────────────────────────────── */
+  document.querySelectorAll('#p-spider th[data-sort]').forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      if (SORT.spider.key === k) SORT.spider.dir = -SORT.spider.dir;
+      else { SORT.spider.key = k; SORT.spider.dir = 1; }
+      renderSpider();
+    };
+  });
+  document.querySelectorAll('#p-active th[data-sort]').forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      if (SORT.active.key === k) SORT.active.dir = -SORT.active.dir;
+      else { SORT.active.key = k; SORT.active.dir = 1; }
+      renderActive();
+    };
+  });
 
   load();
 </script>
