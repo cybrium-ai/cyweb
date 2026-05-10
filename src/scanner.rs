@@ -55,6 +55,15 @@ pub struct ScanConfig {
     /// (force h1), "2" (force h2 — requires plaintext h2c if target
     /// is HTTP, prior-knowledge mode).
     pub http_version: String,
+    /// v0.8.6.1 — Maximum rule strength to run. Rules tagged
+    /// strength: high are skipped when this is "low" or "medium".
+    /// Defaults to "medium".
+    pub strength: String,
+    /// v0.8.6.1 — Maximum rule threshold (confidence required).
+    /// `--threshold low` keeps only rules tagged threshold: low
+    /// (highest confidence, lowest false-positive rate). Defaults
+    /// to "high" (run everything).
+    pub threshold: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -479,11 +488,29 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Phase 6: YAML signature rules
-    let rules = if config.full_scan {
+    let all_loaded_rules = if config.full_scan {
         signatures::rules::load_rules(config.rules_file.as_deref(), true)
     } else {
         signatures::rules::load_rules(config.rules_file.as_deref(), false)
     };
+    // v0.8.6.1 — Apply per-rule policy filter. Rules tagged with
+    // strength/threshold above the configured policy are dropped
+    // before they ever run. Rules without explicit tags default to
+    // medium/medium so legacy behaviour is preserved when the
+    // operator doesn't pass --strength / --threshold.
+    let rule_refs = signatures::rules::filter_by_policy(
+        &all_loaded_rules, &config.strength, &config.threshold,
+    );
+    let dropped_by_policy = all_loaded_rules.len() - rule_refs.len();
+    let rules: Vec<_> = rule_refs.into_iter().cloned().collect();
+    if dropped_by_policy > 0 {
+        eprintln!(
+            "  {} {} rules dropped by policy (strength<={}, threshold<={})",
+            "policy:".dimmed(),
+            dropped_by_policy,
+            config.strength, config.threshold,
+        );
+    }
     eprintln!(
         "{}",
         format!("Phase 6: Signature rules ({} rules{})...", rules.len(), if config.full_scan { " — full" } else { "" }).cyan()

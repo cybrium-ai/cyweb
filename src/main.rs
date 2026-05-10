@@ -184,6 +184,20 @@ enum Commands {
         #[arg(long, default_value = "auto")]
         http_version: String,
 
+        /// v0.8.6.1 — Maximum rule strength (probe aggressiveness):
+        /// low (passive only), medium (default), high (slow / noisy
+        /// payloads enabled). Rules tagged above the configured
+        /// level are skipped.
+        #[arg(long, default_value = "medium")]
+        strength: String,
+
+        /// v0.8.6.1 — Maximum rule threshold (confidence required to
+        /// emit): low keeps only the highest-confidence rules,
+        /// medium balances, high (default) runs everything. Set
+        /// `--threshold low` for a ZAP-style "low FP rate" pass.
+        #[arg(long, default_value = "high")]
+        threshold: String,
+
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
         full: bool,
@@ -374,6 +388,8 @@ async fn main() {
             session_expired_sentinel,
             auth_script,
             http_version,
+            strength,
+            threshold,
         } => {
             print_banner();
 
@@ -416,6 +432,8 @@ async fn main() {
                 session_expired_pattern: session_expired_pattern.clone(),
                 session_expired_sentinel: session_expired_sentinel.clone(),
                 http_version: http_version.clone(),
+                strength: strength.clone(),
+                threshold: threshold.clone(),
             };
 
             // v0.8.6 — Scripted authentication. Runs before form-login.
