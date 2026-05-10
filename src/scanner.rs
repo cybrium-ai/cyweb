@@ -40,6 +40,8 @@ pub struct ScanConfig {
     pub fuzz_enabled: bool,
     pub payloads_dir: Option<String>,
     pub templates_dir: Option<String>,
+    /// v0.8 Phase N — opt-in headless-Chromium crawl for JS SPAs.
+    pub ajax_spider: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -59,11 +61,41 @@ pub struct ScanResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spider_nodes: Vec<crate::crawler::CrawledNode>,
     /// v0.8 Phase G — timestamped log of every active-scan request
-    /// (i.e. requests sent from the fuzz phase). Mirrors ZAP's
-    /// "Active Scan → Sent Messages" pane: ID, method, URL, status,
-    /// RTT, response size. Empty when --fuzz wasn't enabled.
+    /// (i.e. requests sent from the fuzz phase). Standard active-scan
+    /// transaction log: ID, method, URL, status, RTT, response size.
+    /// Empty when --fuzz wasn't enabled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub http_events: Vec<HttpEvent>,
+    /// v0.8 Phase J — chronological log of every phase-progress
+    /// line printed during the scan. Lets the GUI's Output tab show
+    /// the same content the operator saw on stderr, but searchable
+    /// and timestamped after the scan. Each entry is one line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub log_lines: Vec<LogLine>,
+    /// v0.8 Phase O — per-rule rollup of the active scan.
+    /// One row per fuzz payload set / signature rule. Lets the
+    /// operator see which rule was slow, which raised alerts, which
+    /// produced no traffic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_stats: Vec<RuleStat>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RuleStat {
+    pub rule_id: String,
+    pub strength: String,   // "Low" / "Medium" / "High" / "Insane"
+    pub requests: usize,
+    pub findings: usize,
+    pub elapsed_ms: u64,
+    pub status: String,     // "ok" / "skipped" / "error"
+}
+
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LogLine {
+    pub at: String,    // RFC3339 timestamp
+    pub level: String, // "info" / "warn" / "error" / "phase"
+    pub message: String,
 }
 
 /// One row of the "Active Scan / Sent Messages" log.
@@ -265,6 +297,17 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // Normalize target URL
     let target = normalize_url(&config.target);
     let mut all_findings: Vec<Finding> = Vec::new();
+    // v0.8 Phase J — capture phase-summary lines for the GUI Output
+    // tab. Each phase pushes one entry summarising what it found.
+    let mut log_lines: Vec<LogLine> = Vec::new();
+    let log = |out: &mut Vec<LogLine>, level: &str, msg: String| {
+        out.push(LogLine {
+            at: chrono::Utc::now().to_rfc3339(),
+            level: level.to_string(),
+            message: msg,
+        });
+    };
+    log(&mut log_lines, "info", format!("Scan started against {}", config.target));
     let mut requests_made: usize = 0;
 
     // ── Target info block ────────────────────────────────────────────
@@ -432,18 +475,46 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         .await;
         let in_scope_count = outcome.nodes.iter().filter(|n| n.in_scope).count();
         let out_count = outcome.nodes.len() - in_scope_count;
-        eprintln!(
-            "  {} pages crawled · {} nodes ({} in-scope, {} out-of-scope) · {} findings",
+        let summary_msg = format!(
+            "Phase 8 (Spider): {} pages crawled, {} nodes ({} in-scope, {} out-of-scope), {} findings",
             outcome.requests_made,
             outcome.nodes.len(),
             in_scope_count,
             out_count,
             outcome.findings.len(),
         );
+        eprintln!("  {}", &summary_msg[19..]);
+        log(&mut log_lines, "phase", summary_msg);
         requests_made += outcome.requests_made;
         all_findings.extend(outcome.findings);
         crawled_urls = outcome.crawled_urls;
         crawl_nodes  = outcome.nodes;
+    }
+
+    // Phase 8.4 — AJAX headless-Chromium spider (v0.8 Phase N). Opt-in
+    // via --ajax-spider. Drives Chrome via CDP, navigates the target,
+    // extracts links from the rendered DOM, and folds new URLs into
+    // both crawled_urls (for downstream phases) and crawl_nodes (for
+    // the GUI's spider tab).
+    if config.ajax_spider && config.spider_enabled && run_phase("ajax-spider") {
+        eprintln!("{}", "Phase 8.4: AJAX (headless Chrome) spider...".cyan());
+        let max_pages = config.max_paths.min(50);
+        let ajax_nodes = crate::ajax_spider::ajax_crawl(&target, max_pages).await;
+        let new_urls: Vec<String> = ajax_nodes
+            .iter()
+            .filter(|n| n.in_scope)
+            .map(|n| n.url.clone())
+            .filter(|u| !crawled_urls.contains(u))
+            .collect();
+        eprintln!(
+            "  AJAX spider found {} additional links ({} new in-scope URLs)",
+            ajax_nodes.len(), new_urls.len()
+        );
+        log(&mut log_lines, "phase",
+            format!("Phase 8.4 (AJAX spider): {} additional links, {} new in-scope URLs",
+                    ajax_nodes.len(), new_urls.len()));
+        crawled_urls.extend(new_urls);
+        crawl_nodes.extend(ajax_nodes);
     }
 
     // Phase 8.5: Passive HTML analysis (CSRF tokens + SRI). Re-uses
@@ -455,6 +526,8 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         let passive_findings =
             signatures::passive_html::check_passive(&client, &target, &crawled_urls).await;
         eprintln!("  {} findings", passive_findings.len());
+        log(&mut log_lines, "phase",
+            format!("Phase 8.5 (Passive HTML): {} findings", passive_findings.len()));
         requests_made += passive_findings.len().max(1);
         all_findings.extend(passive_findings);
     }
@@ -475,12 +548,14 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // Phase 8.7: Vulnerable JS library scan (retire.js DB matching).
     // Walks every crawled HTML page, extracts <script src=> URLs, and
     // matches each against bundled retire.js patterns. Emits one
-    // finding per (library, version, advisory) tuple — ZAP rule 10003.
+    // finding per (library, version, advisory) tuple.
     if run_phase("retirejs") {
         eprintln!("{}", "Phase 8.7: Vulnerable JS library scan...".cyan());
         let retire_findings =
             signatures::retirejs::check_retirejs(&client, &target, &crawled_urls).await;
         eprintln!("  {} findings", retire_findings.len());
+        log(&mut log_lines, "phase",
+            format!("Phase 8.7 (Vulnerable JS Library): {} findings", retire_findings.len()));
         requests_made += retire_findings.len().max(1);
         all_findings.extend(retire_findings);
     }
@@ -540,8 +615,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // Phase 12: Active fuzzing — context-aware, YAML-driven.
     // v0.8 Phase G — fuzz now also emits a list of HttpEvent rows
     // (timestamped request log) so the GUI's Active Scan tab can
-    // render the same view ZAP shows in its "Active Scan → Sent
-    // Messages" pane.
+    // render an active-scan transaction log.
     let mut fuzz_events: Vec<HttpEvent> = Vec::new();
     if config.fuzz_enabled && run_phase("fuzz") {
         eprintln!(
@@ -556,11 +630,14 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             "  {} injection vulnerabilities found · {} requests logged",
             fuzz_findings.len(), evts.len()
         );
+        log(&mut log_lines, "phase",
+            format!("Phase 12 (Active fuzzing): {} findings, {} requests sent",
+                    fuzz_findings.len(), evts.len()));
         all_findings.extend(fuzz_findings);
         fuzz_events = evts;
     }
 
-    // Phase 13: Advanced templates (multi-step, extractors, Nuclei-compatible)
+    // Phase 13: Advanced templates (multi-step, extractors, third-party-compatible)
     if run_phase("templates") {
         let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
         if !tpls.is_empty() {
@@ -617,7 +694,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
 
     // Phase H — for each spider node, surface the highest-severity
     // finding raised on its URL. Lets the GUI's Spider tab show a
-    // "Highest Alert" column matching ZAP. Severity rank: critical >
+    // "Highest Alert" column. Severity rank: critical >
     // high > medium > low > info.
     fn sev_rank(s: &Severity) -> u8 {
         match s {
@@ -642,6 +719,50 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         }
     }
 
+    log(&mut log_lines, "info", format!(
+        "Scan complete: {} findings ({} critical, {} high, {} medium, {} low, {} info), {}ms",
+        summary.total, summary.critical, summary.high, summary.medium, summary.low, summary.info,
+        duration_ms,
+    ));
+
+    // v0.8 Phase O — Aggregate per-rule stats from the active-scan
+    // event log. The fuzz runner tagged each event with `source =
+    // "fuzz:<payload-id>"`; we group by that to produce one row per
+    // rule. Findings count is derived by matching `f.id` against the
+    // payload-id pattern (CYWEB-FUZZ-<payload-id>-...).
+    let mut rule_stats: Vec<RuleStat> = Vec::new();
+    {
+        use std::collections::HashMap;
+        let mut by_rule: HashMap<String, (usize, u64)> = HashMap::new();
+        for evt in &fuzz_events {
+            let rid = evt.source.strip_prefix("fuzz:").unwrap_or(&evt.source).to_string();
+            let entry = by_rule.entry(rid).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += evt.rtt_ms;
+        }
+        for (rid, (req_count, elapsed)) in by_rule {
+            let findings_count = all_findings.iter()
+                .filter(|f| f.id.contains(&format!("-{}-", rid))
+                          || f.id.contains(&format!("-{}", rid)))
+                .count();
+            rule_stats.push(RuleStat {
+                rule_id: rid,
+                strength: "Medium".into(),
+                requests: req_count,
+                findings: findings_count,
+                elapsed_ms: elapsed,
+                status: "ok".into(),
+            });
+        }
+        // Sort by findings desc, then requests desc — most useful
+        // default for triage.
+        rule_stats.sort_by(|a, b| {
+            b.findings.cmp(&a.findings)
+                .then(b.requests.cmp(&a.requests))
+                .then(a.rule_id.cmp(&b.rule_id))
+        });
+    }
+
     ScanResult {
         target,
         started_at,
@@ -653,6 +774,8 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         tls_info,
         spider_nodes: crawl_nodes,
         http_events: fuzz_events,
+        log_lines,
+        rule_stats,
     }
 }
 

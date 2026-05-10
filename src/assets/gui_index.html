@@ -43,8 +43,8 @@
     border-bottom: 1px solid var(--border);
     position: sticky; top: 0; z-index: 10;
   }
-  header img { height: 32px; width: 32px; }
-  header .title { font-weight: 600; font-size: 16px; }
+  header .brand-shield { height: 30px; width: auto; }
+  header .brand-word   { height: 22px; width: auto; margin-left: -2px; }
   header .target {
     margin-left: 24px; color: var(--muted); font-family: ui-monospace, monospace;
     font-size: 13px;
@@ -61,7 +61,157 @@
   button:hover { border-color: var(--primary); color: var(--primary-2); }
 
   /* ── Layout ────────────────────────────────────────────────────────────── */
-  main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+  main { padding: 24px 28px; max-width: 1800px; margin: 0 auto; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+  .layout-main { min-width: 0; }
+
+  /* Sites sidebar (Phase K) */
+  .sites-sidebar {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    position: sticky; top: 84px; max-height: calc(100vh - 100px);
+    display: flex; flex-direction: column;
+  }
+  .sites-header {
+    display: flex; align-items: center;
+    padding: 12px 14px; font-weight: 600; font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sites-header span:first-child { flex: 1; }
+  .sites-clear {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 18px; padding: 0 8px;
+  }
+  .sites-clear:hover { color: var(--primary-2); }
+  #sites-tree {
+    flex: 1; overflow-y: auto; padding: 6px 0;
+  }
+  .site-host {
+    padding: 6px 12px; cursor: pointer;
+    font-size: 13px; font-weight: 500;
+    display: flex; align-items: center; gap: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .site-host.active { color: var(--primary-2); }
+  .site-host .triangle {
+    transition: transform 120ms; color: var(--muted);
+    width: 10px; display: inline-block;
+  }
+  .site-host.expanded .triangle { transform: rotate(90deg); }
+  .site-host:hover { background: rgba(151, 71, 255, 0.04); }
+  .site-paths { display: none; }
+  .site-host.expanded + .site-paths { display: block; }
+  .site-path {
+    padding: 4px 10px 4px 30px; cursor: pointer;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-left: 2px solid transparent;
+  }
+  .site-path:hover { background: rgba(151, 71, 255, 0.04); color: var(--text); }
+  .site-path.active { background: rgba(151, 71, 255, 0.10); color: var(--primary-2); border-left-color: var(--primary); }
+
+  /* Output/Log panel (Phase J) */
+  .output-log {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; max-height: 70vh;
+    overflow-y: auto; font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .log-row { display: grid; grid-template-columns: 90px 60px 1fr; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .log-row:last-child { border-bottom: none; }
+  .log-time  { color: var(--muted); }
+  .log-level { font-weight: 700; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
+  .log-level.info  { color: var(--accent); }
+  .log-level.phase { color: var(--primary-2); }
+  .log-level.warn  { color: var(--sev-medium); }
+  .log-level.error { color: var(--sev-high); }
+  .log-msg { color: var(--text); word-break: break-word; }
+
+  /* Replay modal (Phase L) */
+  .replay-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .replay-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; width: 720px; max-width: 92vw;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .replay-head {
+    display: flex; align-items: center;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 15px;
+  }
+  .replay-head span { flex: 1; }
+  .replay-head button {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 22px; line-height: 1;
+  }
+  .replay-body { padding: 18px; }
+  .replay-section { margin-bottom: 16px; }
+  .replay-section label {
+    display: block; color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .replay-section input, .replay-section select, .replay-section textarea {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12px;
+    outline: none;
+  }
+  .replay-section input:focus, .replay-section textarea:focus,
+  .replay-section select:focus { border-color: var(--primary); }
+  .replay-section input { margin-bottom: 8px; }
+  .replay-section select { width: 100px; margin-right: 8px; vertical-align: top; }
+  .replay-section input#replay-url { width: calc(100% - 110px); }
+  .replay-actions { display: flex; align-items: center; }
+  button.primary {
+    background: var(--primary); color: white;
+    border: 1px solid var(--primary);
+    padding: 8px 18px; cursor: pointer; font-size: 13px;
+    font-weight: 600; border-radius: 6px;
+  }
+  button.primary:hover { background: var(--primary-2); }
+  #replay-result {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin: 0;
+    font-size: 11px; max-height: 320px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
+
+  .replay-link {
+    color: var(--primary-2); cursor: pointer; font-size: 11px;
+    margin-left: 8px; user-select: none;
+  }
+  .replay-link:hover { text-decoration: underline; }
+
+  /* Chart panel (Phase P) */
+  .chart-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .legend-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 4px; vertical-align: middle;
+  }
+
+  /* Per-rule progress bar (Phase O) */
+  .progress-bar {
+    display: inline-block; width: 100px; height: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; overflow: hidden; vertical-align: middle;
+    margin-right: 8px;
+  }
+  .progress-bar > span {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--primary-2));
+  }
+  .rule-status.ok { color: #22c55e; }
+  .rule-status.skipped { color: var(--muted); }
+  .rule-status.error { color: var(--sev-high); }
 
   /* ── Severity tile row ─────────────────────────────────────────────────── */
   .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
@@ -280,14 +430,17 @@
 <body>
 
 <header>
-  <img src="/logo.svg" alt="Cybrium"/>
-  <span class="title">cyweb</span>
+  <img src="/logo.svg" alt="Cybrium" class="brand-shield"/>
+  <img src="/wordmark.svg" alt="Cybrium" class="brand-word"/>
   <span class="target" id="target-host">—</span>
   <span class="meta" id="scan-meta"></span>
   <div class="export-group">
     <button onclick="window.location='/api/export.json'">JSON</button>
     <button onclick="window.location='/api/export.csv'">CSV</button>
     <button onclick="window.location='/api/export.markdown'">Markdown</button>
+    <button onclick="window.location='/api/export.html'">HTML</button>
+    <button onclick="window.location='/api/export.sarif'">SARIF</button>
+    <button onclick="window.location='/api/export.xml'">XML</button>
   </div>
 </header>
 
@@ -295,11 +448,25 @@
 
   <div class="tiles" id="tiles"></div>
 
-  <div class="tabs">
-    <button class="tab active"  data-panel="alerts">Alerts <span class="badge" id="b-alerts">0</span></button>
-    <button class="tab"          data-panel="spider">Spider <span class="badge" id="b-spider">0</span></button>
-    <button class="tab"          data-panel="active">Active Scan <span class="badge" id="b-active">0</span></button>
-  </div>
+  <!-- Layout: sites sidebar + tabs+panels (Phase K) -->
+  <div class="layout">
+    <aside class="sites-sidebar">
+      <div class="sites-header">
+        <span>Sites</span>
+        <button class="sites-clear" title="clear filter" onclick="clearSiteFilter()">×</button>
+      </div>
+      <div id="sites-tree"></div>
+    </aside>
+
+    <div class="layout-main">
+      <div class="tabs">
+        <button class="tab active"  data-panel="alerts">Alerts <span class="badge" id="b-alerts">0</span></button>
+        <button class="tab"          data-panel="spider">Spider <span class="badge" id="b-spider">0</span></button>
+        <button class="tab"          data-panel="active">Active Scan <span class="badge" id="b-active">0</span></button>
+        <button class="tab"          data-panel="history">History <span class="badge" id="b-history">0</span></button>
+        <button class="tab"          data-panel="chart">Chart</button>
+        <button class="tab"          data-panel="output">Output <span class="badge" id="b-output">0</span></button>
+      </div>
 
   <!-- ─── Alerts panel (Phase F — tree grouped) ───────────────────────── -->
   <div class="panel active" id="p-alerts">
@@ -432,8 +599,31 @@
     </div>
   </div>
 
-  <!-- ─── Active Scan panel (Phase G — Sent Messages) ────────────────── -->
+  <!-- ─── Output / Log panel (Phase J) ────────────────────────────────── -->
+  <div class="panel" id="p-output">
+    <div class="filters">
+      <input id="output-search" type="search" placeholder="Search log messages…">
+      <select id="output-level">
+        <option value="">All levels</option>
+        <option value="phase">Phase</option>
+        <option value="info">Info</option>
+        <option value="warn">Warn</option>
+        <option value="error">Error</option>
+      </select>
+      <span class="count-pill" id="output-count"></span>
+    </div>
+    <div class="output-log" id="output-rows"></div>
+  </div>
+
+  <!-- ─── Active Scan panel (Phase G — Sent Messages + Phase O — By Rule) -->
   <div class="panel" id="p-active">
+    <div class="subtabs">
+      <button class="subtab active" data-asub="msgs">Sent Messages <span class="badge" id="b-asub-msgs">0</span></button>
+      <button class="subtab"         data-asub="byrule">By Rule <span class="badge" id="b-asub-rule">0</span></button>
+    </div>
+
+    <!-- Sub-tab: Sent Messages (existing Phase G content) -->
+    <div class="subpanel active" id="ap-msgs">
     <div class="filters">
       <input id="active-search" type="search" placeholder="Search URL or source…">
       <select id="active-method">
@@ -471,9 +661,134 @@
         <tbody id="active-rows"></tbody>
       </table>
     </div>
+    </div><!-- /#ap-msgs -->
+
+    <!-- Sub-tab: By Rule — per-rule progress: requests, findings, elapsed -->
+    <div class="subpanel" id="ap-byrule">
+      <div class="filters">
+        <input id="rule-search" type="search" placeholder="Search rule id…">
+        <span class="count-pill" id="rule-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Strength</th>
+              <th>Requests</th>
+              <th>Findings</th>
+              <th>Elapsed</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="rule-rows"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
+  <!-- ─── History panel (proxy mode) — every captured req/resp ───────── -->
+  <div class="panel" id="p-history">
+    <div class="filters">
+      <input id="hist-search" type="search" placeholder="Search URL or kind…">
+      <select id="hist-method">
+        <option value="">All methods</option>
+        <option>GET</option><option>POST</option><option>PUT</option>
+        <option>PATCH</option><option>DELETE</option><option>CONNECT</option><option>HEAD</option>
+      </select>
+      <select id="hist-status">
+        <option value="">All statuses</option>
+        <option value="2">2xx</option><option value="3">3xx</option>
+        <option value="4">4xx</option><option value="5">5xx</option>
+      </select>
+      <select id="hist-kind">
+        <option value="">All kinds</option>
+        <option value="http">HTTP</option>
+        <option value="tunnel">HTTPS tunnel</option>
+      </select>
+      <span class="count-pill" id="hist-count"></span>
+      <button onclick="exportHistory()" title="Download as JSON">↓ JSON</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>At</th>
+            <th>Method</th>
+            <th>URL</th>
+            <th>Code</th>
+            <th>RTT</th>
+            <th>Req</th>
+            <th>Resp</th>
+            <th>Kind</th>
+          </tr>
+        </thead>
+        <tbody id="hist-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ─── Chart panel (Phase P) — Response Chart ─────────────────────── -->
+  <div class="panel" id="p-chart">
+    <div class="filters">
+      <span class="count-pill" id="chart-summary">—</span>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;color:var(--muted)">
+        <span class="legend-dot" style="background:var(--text)"></span> Total &nbsp;
+        <span class="legend-dot" style="background:#facc15"></span> 1xx &nbsp;
+        <span class="legend-dot" style="background:#22c55e"></span> 2xx &nbsp;
+        <span class="legend-dot" style="background:#06b6d4"></span> 3xx &nbsp;
+        <span class="legend-dot" style="background:#ef4444"></span> 4xx &nbsp;
+        <span class="legend-dot" style="background:#a78bfa"></span> 5xx
+      </span>
+    </div>
+    <div class="chart-wrap">
+      <svg id="response-chart" width="100%" height="360" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+
+    </div><!-- /.layout-main -->
+  </div><!-- /.layout -->
+
 </main>
+
+<!-- Manual Request Editor modal (Phase L) -->
+<div class="replay-overlay" id="replay-overlay" style="display:none">
+  <div class="replay-modal">
+    <div class="replay-head">
+      <span>Manual Request Editor</span>
+      <button onclick="closeReplay()">×</button>
+    </div>
+    <div class="replay-body">
+      <div class="replay-section">
+        <label>Method</label>
+        <select id="replay-method">
+          <option>GET</option><option>POST</option><option>PUT</option>
+          <option>PATCH</option><option>DELETE</option><option>HEAD</option>
+        </select>
+        <label>URL</label>
+        <input id="replay-url" type="text" placeholder="https://..."/>
+      </div>
+      <div class="replay-section">
+        <label>Headers (one per line, "Name: Value")</label>
+        <textarea id="replay-headers" rows="6" placeholder="User-Agent: cyweb-replay&#10;Cookie: session=abc"></textarea>
+      </div>
+      <div class="replay-section">
+        <label>Body (POST/PUT/PATCH)</label>
+        <textarea id="replay-body" rows="6" placeholder=""></textarea>
+      </div>
+      <div class="replay-actions">
+        <button class="primary" onclick="sendReplay()">Send Request</button>
+        <span id="replay-status" style="margin-left:12px;color:var(--muted)"></span>
+      </div>
+      <div class="replay-section" id="replay-result-wrap" style="display:none">
+        <label>Response</label>
+        <pre id="replay-result"></pre>
+      </div>
+    </div>
+  </div>
+</div>
 
 <footer>
   Cybrium AI · cyweb scanner · <a href="https://github.com/cybrium-ai/cyweb">github.com/cybrium-ai/cyweb</a>
@@ -510,9 +825,15 @@
       `${DATA.findings.length} alerts · ${DATA.spider_nodes.length} spider nodes · ` +
       `${DATA.http_events.length} active-scan req · ${dur}s`;
 
+    DATA.log_lines  = DATA.log_lines  || [];
+    DATA.rule_stats = DATA.rule_stats || [];
+
     document.getElementById('b-alerts').textContent = DATA.findings.length;
     document.getElementById('b-spider').textContent = DATA.spider_nodes.length;
     document.getElementById('b-active').textContent = DATA.http_events.length;
+    document.getElementById('b-output').textContent = DATA.log_lines.length;
+    document.getElementById('b-asub-msgs').textContent = DATA.http_events.length;
+    document.getElementById('b-asub-rule').textContent = DATA.rule_stats.length;
 
     // Spider sub-tab badges (Phase H)
     document.getElementById('b-sub-urls').textContent  = DATA.spider_nodes.length;
@@ -521,12 +842,349 @@
     document.getElementById('b-sub-msgs').textContent  = addedNodes.length;
 
     renderTiles();
+    renderSitesTree();
+    renderAlerts();
+    renderSpider();
+    renderNodes();
+    renderMessages();
+    renderActive();
+    renderRules();
+    renderChart();
+    renderOutput();
+    fetchHistory();
+  }
+
+  /* ── History (proxy mode) — polls /api/proxy_events when active ──── */
+  let HISTORY = [];
+  let HIST_TIMER = null;
+
+  async function fetchHistory() {
+    try {
+      const r = await fetch('/api/proxy_events');
+      HISTORY = await r.json();
+    } catch { HISTORY = []; }
+    document.getElementById('b-history').textContent = HISTORY.length;
+    renderHistory();
+  }
+
+  function startHistoryPoll() {
+    if (HIST_TIMER) return;
+    HIST_TIMER = setInterval(fetchHistory, 2000);
+  }
+  function stopHistoryPoll() {
+    if (HIST_TIMER) { clearInterval(HIST_TIMER); HIST_TIMER = null; }
+  }
+
+  function renderHistory() {
+    const q   = document.getElementById('hist-search').value.toLowerCase();
+    const m   = document.getElementById('hist-method').value;
+    const sf  = document.getElementById('hist-status').value;
+    const k   = document.getElementById('hist-kind').value;
+    const items = HISTORY.filter(e => {
+      if (m && e.method !== m) return false;
+      if (sf && Math.floor(e.status / 100) !== Number(sf)) return false;
+      if (k && e.kind !== k) return false;
+      if (q) {
+        const hay = `${e.url} ${e.kind} ${e.method}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).slice().reverse();   // newest first
+
+    document.getElementById('hist-count').textContent =
+      `${items.length} of ${HISTORY.length} events`;
+    const tbody = document.getElementById('hist-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">
+        No captured traffic. Run <code>cyweb proxy</code>, configure your browser's proxy
+        to <code>127.0.0.1:8989</code>, and browse the target — captured requests appear here.
+      </td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(e => {
+      const ts = e.at ? e.at.split('T')[1]?.split('.')[0] ?? e.at : '—';
+      const cls = e.status > 0 ? `status-${Math.floor(e.status/100)}xx` : '';
+      const kindBadge = e.kind === 'tunnel'
+        ? '<span class="tag-chip" style="color:var(--accent);border-color:var(--accent)">TLS tunnel</span>'
+        : '<span class="tag-chip">HTTP</span>';
+      return `
+        <tr>
+          <td><code>${e.id}</code></td>
+          <td><code style="color:var(--muted);font-size:11px">${escape(ts)}</code></td>
+          <td><span class="method ${escape(e.method)}">${escape(e.method)}</span></td>
+          <td class="url-cell" title="${escape(e.url)}">${escape(e.url)}</td>
+          <td class="status-cell ${cls}">${e.status > 0 ? e.status : '—'}</td>
+          <td><code>${e.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(e.req_size)}</code></td>
+          <td><code>${formatBytes(e.resp_size)}</code></td>
+          <td>${kindBadge}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function exportHistory() {
+    const blob = new Blob([JSON.stringify(HISTORY, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'cyweb-history.json';
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  /* ── Per-rule progress (Phase O) ──────────────────────────────────── */
+  function renderRules() {
+    const q = document.getElementById('rule-search').value.toLowerCase();
+    const items = (DATA.rule_stats || []).filter(r =>
+      !q || r.rule_id.toLowerCase().includes(q)
+    );
+    document.getElementById('rule-count').textContent =
+      `${items.length} of ${(DATA.rule_stats || []).length} rules`;
+    const tbody = document.getElementById('rule-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No rules ran — use <code>--fuzz</code> to enable the active scanner.</td></tr>`;
+      return;
+    }
+    const maxReq = Math.max(1, ...items.map(r => r.requests));
+    tbody.innerHTML = items.map(r => `
+      <tr>
+        <td><code>${escape(r.rule_id)}</code></td>
+        <td><span style="color:var(--muted);font-size:12px">${escape(r.strength)}</span></td>
+        <td>
+          <span class="progress-bar"><span style="width:${(r.requests/maxReq*100).toFixed(0)}%"></span></span>
+          <code>${r.requests}</code>
+        </td>
+        <td><strong style="color:${r.findings>0?'var(--sev-high)':'var(--muted)'}">${r.findings}</strong></td>
+        <td><code>${(r.elapsed_ms/1000).toFixed(2)}s</code></td>
+        <td><span class="rule-status ${escape(r.status)}">${escape(r.status)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  /* ── Response Chart (Phase P) — SVG line chart ────────────────────── */
+  function renderChart() {
+    const evts = DATA.http_events || [];
+    const svg = document.getElementById('response-chart');
+    if (!svg) return;
+    if (evts.length === 0) {
+      svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="var(--muted)" font-size="13">No active-scan requests yet — run with --fuzz.</text>`;
+      document.getElementById('chart-summary').textContent = '0 requests';
+      return;
+    }
+    // Bin events by 1-second epoch second since first event.
+    const tsList = evts.map(e => Date.parse(e.sent_at)).filter(t => !isNaN(t));
+    const t0 = Math.min(...tsList), t1 = Math.max(...tsList);
+    const span = Math.max(1, Math.ceil((t1 - t0) / 1000));
+    const bins = Array.from({length: span+1}, () => ({total:0, c1:0, c2:0, c3:0, c4:0, c5:0}));
+    for (const e of evts) {
+      const t = Date.parse(e.sent_at);
+      if (isNaN(t)) continue;
+      const b = Math.floor((t - t0) / 1000);
+      if (b < 0 || b > span) continue;
+      bins[b].total++;
+      const cls = `c${Math.floor(e.status/100)}`;
+      if (bins[b][cls] !== undefined) bins[b][cls]++;
+    }
+    const maxY = Math.max(1, ...bins.map(b => b.total));
+    const W = svg.clientWidth || 800;
+    const H = 360;
+    const padL = 44, padR = 16, padT = 14, padB = 32;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    function x(i) { return padL + (i / Math.max(1, span)) * plotW; }
+    function y(v) { return padT + plotH - (v / maxY) * plotH; }
+
+    // Build polylines
+    function poly(key, color) {
+      const pts = bins.map((b, i) => `${x(i).toFixed(1)},${y(b[key]).toFixed(1)}`).join(' ');
+      return `<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${pts}"/>`;
+    }
+    // Y-axis ticks (5 lines)
+    let ticks = '';
+    for (let k = 0; k <= 4; k++) {
+      const v = Math.round(maxY * (4-k) / 4);
+      const yy = padT + (k / 4) * plotH;
+      ticks += `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+      ticks += `<text x="${padL-6}" y="${yy+3}" fill="var(--muted)" font-size="10" text-anchor="end">${v}</text>`;
+    }
+    // X-axis end labels
+    const xlbl = `<text x="${padL}" y="${H-12}" fill="var(--muted)" font-size="10">0s</text>` +
+                 `<text x="${W-padR}" y="${H-12}" fill="var(--muted)" font-size="10" text-anchor="end">${span}s</text>`;
+
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = ticks + xlbl
+      + poly('total', 'var(--text)')
+      + poly('c1',    '#facc15')
+      + poly('c2',    '#22c55e')
+      + poly('c3',    '#06b6d4')
+      + poly('c4',    '#ef4444')
+      + poly('c5',    '#a78bfa');
+
+    document.getElementById('chart-summary').textContent =
+      `${evts.length} requests · peak ${maxY}/s · ${span}s span`;
+  }
+
+  /* ── Sites tree sidebar (Phase K) ─────────────────────────────────── */
+  let SITE_FILTER = { host: null, path: null };
+  let EXPANDED_HOSTS = new Set();
+
+  function renderSitesTree() {
+    // Build host → set of paths from spider_nodes
+    const tree = new Map();
+    for (const n of DATA.spider_nodes) {
+      try {
+        const u = new URL(n.url);
+        const host = u.host;
+        const pathKey = `${n.method} ${u.pathname || '/'}`;
+        if (!tree.has(host)) tree.set(host, new Set());
+        tree.get(host).add(pathKey);
+      } catch (_) {}
+    }
+    const wrap = document.getElementById('sites-tree');
+    if (tree.size === 0) {
+      wrap.innerHTML = `<div style="padding:14px;color:var(--muted);font-size:12px">No sites yet — run cyweb with <code>--spider</code>.</div>`;
+      return;
+    }
+    const hosts = [...tree.keys()].sort();
+    wrap.innerHTML = hosts.map(host => {
+      const open = EXPANDED_HOSTS.has(host);
+      const isActiveHost = SITE_FILTER.host === host;
+      const paths = [...tree.get(host)].sort();
+      return `
+        <div class="site-host ${open?'expanded':''} ${isActiveHost?'active':''}" data-host="${escape(host)}">
+          <span class="triangle">▶</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(host)}</span>
+          <span style="color:var(--muted);font-size:10px">${paths.length}</span>
+        </div>
+        <div class="site-paths">
+          ${paths.map(p => {
+            const active = SITE_FILTER.host === host && SITE_FILTER.path === p;
+            return `<div class="site-path ${active?'active':''}" data-host="${escape(host)}" data-path="${escape(p)}" title="${escape(p)}">${escape(p)}</div>`;
+          }).join('')}
+        </div>
+      `;
+    }).join('');
+
+    wrap.querySelectorAll('.site-host').forEach(el => {
+      el.onclick = () => {
+        const host = el.dataset.host;
+        if (EXPANDED_HOSTS.has(host)) EXPANDED_HOSTS.delete(host); else EXPANDED_HOSTS.add(host);
+        SITE_FILTER = { host, path: null };
+        renderSitesTree();
+        applyFilters();
+      };
+    });
+    wrap.querySelectorAll('.site-path').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        SITE_FILTER = { host: el.dataset.host, path: el.dataset.path };
+        renderSitesTree();
+        applyFilters();
+      };
+    });
+  }
+
+  function clearSiteFilter() {
+    SITE_FILTER = { host: null, path: null };
+    renderSitesTree();
+    applyFilters();
+  }
+
+  function matchesSite(url, method) {
+    if (!SITE_FILTER.host) return true;
+    try {
+      const u = new URL(url);
+      if (u.host !== SITE_FILTER.host) return false;
+      if (SITE_FILTER.path) {
+        const pk = `${method || 'GET'} ${u.pathname || '/'}`;
+        if (pk !== SITE_FILTER.path) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  function applyFilters() {
     renderAlerts();
     renderSpider();
     renderNodes();
     renderMessages();
     renderActive();
   }
+
+  /* ── Output / Log (Phase J) ─────────────────────────────────────────── */
+  function renderOutput() {
+    const q = document.getElementById('output-search').value.toLowerCase();
+    const lvl = document.getElementById('output-level').value;
+    const items = (DATA.log_lines || []).filter(l => {
+      if (lvl && l.level !== lvl) return false;
+      if (q && !(l.message || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+    document.getElementById('output-count').textContent =
+      `${items.length} of ${(DATA.log_lines || []).length} log entries`;
+    const wrap = document.getElementById('output-rows');
+    if (items.length === 0) {
+      wrap.innerHTML = `<div class="empty">No log entries match.</div>`;
+      return;
+    }
+    wrap.innerHTML = items.map(l => {
+      const t = (l.at || '').split('T')[1]?.split('.')[0] ?? '—';
+      return `
+        <div class="log-row">
+          <span class="log-time">${escape(t)}</span>
+          <span class="log-level ${escape(l.level)}">${escape(l.level)}</span>
+          <span class="log-msg">${escape(l.message || '')}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /* ── Manual Request Editor (Phase L) ──────────────────────────────── */
+  function openReplay(opts) {
+    document.getElementById('replay-method').value = opts.method || 'GET';
+    document.getElementById('replay-url').value    = opts.url    || '';
+    document.getElementById('replay-headers').value =
+      'User-Agent: cyweb-replay/0.8\nAccept: */*';
+    document.getElementById('replay-body').value   = '';
+    document.getElementById('replay-status').textContent = '';
+    document.getElementById('replay-result-wrap').style.display = 'none';
+    document.getElementById('replay-overlay').style.display = 'flex';
+  }
+  function closeReplay() {
+    document.getElementById('replay-overlay').style.display = 'none';
+  }
+  async function sendReplay() {
+    const method = document.getElementById('replay-method').value;
+    const url    = document.getElementById('replay-url').value;
+    const headersText = document.getElementById('replay-headers').value;
+    const body   = document.getElementById('replay-body').value;
+    const headers = {};
+    headersText.split('\n').forEach(line => {
+      const i = line.indexOf(':');
+      if (i > 0) headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    });
+    document.getElementById('replay-status').textContent = 'Sending...';
+    document.getElementById('replay-result-wrap').style.display = 'none';
+    try {
+      const resp = await fetch('/api/replay', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ method, url, headers, body })
+      });
+      const data = await resp.json();
+      const hdrText = data.headers.map(([k,v]) => `${k}: ${v}`).join('\n');
+      const out = `HTTP ${data.status} ${data.reason} · ${data.rtt_ms}ms\n\n${hdrText}\n\n${data.body.slice(0, 8000)}${data.body.length > 8000 ? '\n\n... (truncated)' : ''}`;
+      document.getElementById('replay-result').textContent = out;
+      document.getElementById('replay-result-wrap').style.display = 'block';
+      document.getElementById('replay-status').textContent =
+        `${data.status} ${data.reason} · ${data.rtt_ms}ms`;
+    } catch (e) {
+      document.getElementById('replay-status').textContent = 'Error: ' + e.message;
+    }
+  }
+  // Close on overlay click (but not modal click)
+  document.getElementById('replay-overlay').onclick = (e) => {
+    if (e.target.id === 'replay-overlay') closeReplay();
+  };
 
   function renderTiles() {
     const s = DATA.summary;
@@ -553,6 +1211,7 @@
     return DATA.findings.filter(f => {
       const fsev = sevName(f.severity);
       if (sev && fsev !== sev) return false;
+      if (!matchesSite(f.url, f.http_method || 'GET')) return false;
       if (q) {
         const hay = `${f.title} ${f.url} ${f.cwe ?? ''} ${f.evidence ?? ''} ${f.description}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -618,6 +1277,9 @@
                     <dt>Rule ID</dt><dd><code>${escape(f.id)}</code></dd>
                     ${f.vuln_class ? `<dt>Vuln class</dt><dd><code>${escape(f.vuln_class)}</code></dd>` : ''}
                   </dl>
+                  <div style="margin-top:12px">
+                    <button onclick="event.stopPropagation(); openReplay({method:'${escape(f.http_method||'GET')}', url:'${escape(f.url).replace(/'/g, '&#39;')}'})">▶ Open in Manual Request Editor</button>
+                  </div>
                 </div>
               `;
             }).join('')}
@@ -659,6 +1321,7 @@
       if (m && n.method !== m)         return false;
       if (src && n.seed_source !== src) return false;
       if (q && !n.url.toLowerCase().includes(q)) return false;
+      if (!matchesSite(n.url, n.method)) return false;
       return true;
     });
     // Sort
@@ -770,6 +1433,7 @@
     let evts = DATA.http_events.filter(e => {
       if (m && e.method !== m) return false;
       if (sFilter && Math.floor(e.status / 100) !== Number(sFilter)) return false;
+      if (!matchesSite(e.url, e.method)) return false;
       if (q) {
         const hay = `${e.url} ${e.source}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -820,16 +1484,42 @@
     ACTIVE_TAB = panel;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + panel));
+    // Re-render the chart when its panel becomes visible — SVG width
+    // reads as 0 while display:none, so the first render is wrong
+    // until we re-paint.
+    if (panel === 'chart') renderChart();
+    // History tab polls proxy_events while it's the active tab so
+    // captured traffic streams in live.
+    if (panel === 'history') {
+      fetchHistory();
+      startHistoryPoll();
+    } else {
+      stopHistoryPoll();
+    }
   }
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.panel));
 
   /* Spider sub-tab switching (Phase H) */
-  document.querySelectorAll('.subtab').forEach(t => {
+  document.querySelectorAll('.subtab[data-sub]').forEach(t => {
     t.onclick = () => {
       const sub = t.dataset.sub;
-      document.querySelectorAll('.subtab').forEach(x => x.classList.toggle('active', x.dataset.sub === sub));
-      document.querySelectorAll('.subpanel').forEach(p => p.classList.toggle('active', p.id === 'sp-' + sub));
+      document.querySelectorAll('.subtab[data-sub]').forEach(x => x.classList.toggle('active', x.dataset.sub === sub));
+      document.querySelectorAll('#p-spider .subpanel').forEach(p => p.classList.toggle('active', p.id === 'sp-' + sub));
     };
+  });
+  /* Active Scan sub-tab switching (Phase O) */
+  document.querySelectorAll('.subtab[data-asub]').forEach(t => {
+    t.onclick = () => {
+      const sub = t.dataset.asub;
+      document.querySelectorAll('.subtab[data-asub]').forEach(x => x.classList.toggle('active', x.dataset.asub === sub));
+      document.querySelectorAll('#p-active .subpanel').forEach(p => p.classList.toggle('active', p.id === 'ap-' + sub));
+    };
+  });
+  document.getElementById('rule-search').addEventListener('input', renderRules);
+  ['hist-search','hist-method','hist-status','hist-kind'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input',  renderHistory);
+    el.addEventListener('change', renderHistory);
   });
   ['nodes-search'].forEach(id => document.getElementById(id).addEventListener('input', renderNodes));
   ['msg-search','msg-status','msg-tag'].forEach(id => {
@@ -850,6 +1540,11 @@
     const el = document.getElementById(id);
     el.addEventListener('input', renderActive);
     el.addEventListener('change', renderActive);
+  });
+  ['output-search','output-level'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderOutput);
+    el.addEventListener('change', renderOutput);
   });
 
   /* ── Sort headers ───────────────────────────────────────────────────── */

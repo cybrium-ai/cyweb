@@ -342,7 +342,7 @@ fn discover_injection_points(target: &str, crawled_urls: &[String]) -> Vec<Injec
 
 /// Fetch every crawled HTML page, parse `<form>` tags, and emit one
 /// InjectionPoint per (form action × form param) tuple — same shape
-/// that ZAP's spider-fed active scanner uses. Skips upload forms
+/// for spider-fed active scanning. Skips upload forms
 /// (`enctype=multipart/form-data`) since cyweb's payload format is
 /// urlencoded.
 async fn discover_form_points(client: &Client, crawled_urls: &[String]) -> Vec<InjectionPoint> {
@@ -584,7 +584,7 @@ pub async fn run_fuzz(
 
                 // v0.8 Phase G — log every active-scan request to the
                 // shared event vec so the GUI's Active Scan tab can
-                // render the same view ZAP shows under "Sent Messages".
+                // render an active-scan transaction log.
                 event_id += 1;
                 http_events.push(crate::scanner::HttpEvent {
                     id: event_id,

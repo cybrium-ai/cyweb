@@ -50,10 +50,10 @@ fn parse_severity(s: &str) -> Severity {
     }
 }
 
-const EMBEDDED_RULES: &str = include_str!("../../rules/default.yaml");
-const EMBEDDED_NIKTO: &str = include_str!("../../rules/nikto.yaml");
+const EMBEDDED_RULES:    &str = include_str!("../../rules/default.yaml");
+const EMBEDDED_EXTENDED: &str = include_str!("../../rules/extended.yaml");
 
-pub fn load_rules(extra_path: Option<&str>, include_nikto: bool) -> Vec<Rule> {
+pub fn load_rules(extra_path: Option<&str>, include_extended: bool) -> Vec<Rule> {
     let mut all_rules = Vec::new();
 
     // Prefer ~/.cyweb/default.yaml (updated via `cyweb update-rules`) over embedded
@@ -74,19 +74,21 @@ pub fn load_rules(extra_path: Option<&str>, include_nikto: bool) -> Vec<Rule> {
         }
     }
 
-    // Full scan: include Nikto-converted rules (4,425 additional checks)
-    if include_nikto {
-        let home_nikto = dirs::home_dir()
-            .map(|h| h.join(".cyweb/nikto.yaml"))
+    // Full scan: include the extended ruleset (4,425 additional checks
+    // covering server fingerprinting / outdated software / CGI vulns
+    // / hidden file paths / common misconfigurations).
+    if include_extended {
+        let home_extended = dirs::home_dir()
+            .map(|h| h.join(".cyweb/extended.yaml"))
             .filter(|p| p.exists());
 
-        if let Some(ref path) = home_nikto {
+        if let Some(ref path) = home_extended {
             if let Ok(content) = std::fs::read_to_string(path) {
                 if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(&content) {
                     all_rules.extend(ruleset.rules);
                 }
             }
-        } else if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(EMBEDDED_NIKTO) {
+        } else if let Ok(ruleset) = serde_yaml::from_str::<RuleSet>(EMBEDDED_EXTENDED) {
             all_rules.extend(ruleset.rules);
         }
     }

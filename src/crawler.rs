@@ -1,4 +1,4 @@
-//! v0.8 Phase E — deeper spider with ZAP-equivalent feature set.
+//! v0.8 Phase E — deeper spider with full DAST feature set.
 //!
 //! Now seeds from `robots.txt` (disallow paths are admin-hidden hints),
 //! `sitemap.xml` (declared site URLs), and the target itself. Tracks
@@ -9,7 +9,7 @@
 //! renders.
 //!
 //! Out-of-scope URLs (different host) are *recorded but not followed*,
-//! matching ZAP's behaviour. They show up flagged in the spider table
+//! standard scope-limiting behaviour. They show up flagged in the spider table
 //! so an operator can confirm the site only links to the third-party
 //! domains they expect.
 
@@ -58,7 +58,7 @@ pub struct CrawledNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Auto-derived content classification tags — Script / Form /
-    /// Comment / Password / JSON / MailTo / Upload — same idea as ZAP's
+    /// Comment / Password / JSON / MailTo / Upload — content classification
     /// `<tags>` column. Empty until the body is parsed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -116,9 +116,9 @@ pub async fn crawl_with_nodes(
 
     // ── Build the seed set ────────────────────────────────────────────────────
     // (1) the target itself, (2) discovered Disallow paths from
-    // /robots.txt, (3) <loc> entries from /sitemap.xml. ZAP does the
-    // same — admins often hide sensitive paths in robots.txt and you
-    // want them surfaced as scan targets, not skipped.
+    // /robots.txt, (3) <loc> entries from /sitemap.xml. Admins often
+    // hide sensitive paths in robots.txt and we want them surfaced as
+    // scan targets, not skipped.
     //
     // Per-node tracking — a single URL can have multiple discovery
     // sources; we keep the FIRST one seen. The HashMap is keyed on
@@ -475,8 +475,7 @@ fn upsert_node<'a>(
 }
 
 /// Inspect a fetched HTML / JSON / etc. response body and label it
-/// with content-classifier tags — same shape as ZAP's spider Tags
-/// column. Cheap string scan; no full HTML parse.
+/// with content-classifier tags. Cheap string scan; no full HTML parse.
 fn derive_tags(content_type: &str, body: &str) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
     let lower_ct = content_type.to_ascii_lowercase();

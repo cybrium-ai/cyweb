@@ -19,11 +19,13 @@ mod checkpoint;
 mod form_login;
 mod evasion;
 mod mutate;
+mod ajax_spider;
 mod fuzz;
 mod gui;
+mod proxy;
 mod hardware_rot;
 mod templates;
-mod nuclei_convert;
+mod template_convert;
 // Sprint 76 — modern vuln classes that need Rust runtime extensions.
 // race needs concurrent-burst orchestration; websocket needs a WS client.
 mod race;
@@ -188,7 +190,7 @@ enum Commands {
         #[arg(long)]
         payloads: Option<String>,
 
-        /// Template directory for advanced multi-step scanning (Nuclei-compatible)
+        /// Template directory for advanced multi-step scanning
         #[arg(long)]
         templates: Option<String>,
 
@@ -202,14 +204,25 @@ enum Commands {
         /// Port for the local web UI (only meaningful with --gui).
         #[arg(long, default_value = "8990")]
         gui_port: u16,
+
+        /// v0.8 Phase N — drive a headless Chromium via Chrome DevTools
+        /// Protocol to crawl JS-rendered SPAs. Requires Chrome /
+        /// Chromium installed locally (auto-discovered, or override
+        /// via CYWEB_CHROME_PATH env). Slower than the static spider
+        /// but discovers routes that only appear after JS executes.
+        #[arg(long)]
+        ajax_spider: bool,
     },
     /// Update signature rules from GitHub
     UpdateRules,
     /// Check for updates and self-update the binary
     Update,
-    /// Convert Nuclei templates to cyweb format
-    ConvertNuclei {
-        /// Input directory containing Nuclei templates
+    /// Convert third-party YAML scan templates to cyweb format.
+    /// Accepts the common "external template" YAML schema (info /
+    /// http / requests / matchers blocks) and emits cyweb's own
+    /// template format under ~/.cyweb/templates/.
+    ConvertTemplates {
+        /// Input directory containing third-party templates
         #[arg(long, short = 'i')]
         input: String,
         /// Output directory for converted cyweb templates (default: ~/.cyweb/templates/)
@@ -218,6 +231,25 @@ enum Commands {
     },
     /// Show version info
     Version,
+
+    /// Local intercept proxy. Listens on 127.0.0.1 and captures every
+    /// request your browser sends through it, surfacing them in the
+    /// GUI's History tab. Plain HTTP is fully captured; HTTPS CONNECT
+    /// is tunneled (body not inspected in this release).
+    ///
+    /// NOTE: This is a lightweight quick-capture mode — for serious
+    /// proxy work (HTTPS MITM with a generated CA, intercept queue,
+    /// breakpoints, session replay), use the dedicated `cyproxy`
+    /// tool. `cyweb proxy` is for "I just want to record a few
+    /// requests without setting anything up" cases.
+    Proxy {
+        /// Port for the HTTP intercept proxy.
+        #[arg(long, default_value = "8989")]
+        port: u16,
+        /// Port for the local web UI showing captured history.
+        #[arg(long, default_value = "8990")]
+        gui_port: u16,
+    },
 
     /// Report this host's hardware Root of Trust (TPM / Secure Enclave).
     /// Detection only — feeds scanner-identity and tamper-detection
@@ -274,6 +306,7 @@ async fn main() {
             templates,
             gui,
             gui_port,
+            ajax_spider,
         } => {
             print_banner();
 
@@ -311,6 +344,7 @@ async fn main() {
                 fuzz_enabled: fuzz,
                 payloads_dir: payloads,
                 templates_dir: templates,
+                ajax_spider,
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies
@@ -576,14 +610,14 @@ async fn main() {
                 }
             }
         }
-        Commands::ConvertNuclei { input, output } => {
+        Commands::ConvertTemplates { input, output } => {
             let out = output.unwrap_or_else(|| {
                 dirs::home_dir()
                     .map(|h| h.join(".cyweb/templates").to_string_lossy().to_string())
                     .unwrap_or_else(|| "templates-out".to_string())
             });
-            eprintln!("{}", format!("Converting Nuclei templates: {} -> {}", input, out).cyan());
-            let result = nuclei_convert::convert_directory(&input, &out);
+            eprintln!("{}", format!("Converting templates: {} -> {}", input, out).cyan());
+            let result = template_convert::convert_directory(&input, &out);
             eprintln!("{}", format!(
                 "Done: {} total, {} converted, {} skipped, {} errors",
                 result.total, result.converted, result.skipped, result.errors
@@ -624,6 +658,17 @@ async fn main() {
                         );
                     }
                 }
+            }
+        }
+
+        Commands::Proxy { port, gui_port } => {
+            eprintln!();
+            eprintln!("\x1b[1;35m  cyweb proxy mode\x1b[0m");
+            eprintln!("\x1b[2m  HTTP intercept on port {} · GUI History tab on http://127.0.0.1:{}\x1b[0m", port, gui_port);
+            eprintln!();
+            if let Err(e) = proxy::run_proxy_subcommand(port, gui_port).await {
+                eprintln!("\x1b[1;31m  proxy failed: {}\x1b[0m", e);
+                process::exit(2);
             }
         }
 
