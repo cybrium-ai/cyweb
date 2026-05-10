@@ -573,71 +573,276 @@ fn evaluate_single_matcher(
     }
 }
 
-/// Simple DSL evaluator for the common template-DSL patterns.
+/// DSL evaluator for the common template-DSL patterns. v0.8.2 added
+/// helper-function support (`md5`, `sha1`, `sha256`, `base64`,
+/// `base64_decode`, `url_encode`, `url_decode`, `len(string)`,
+/// `regex_match`) so upstream templates that use them in their
+/// `dsl:` matcher expressions convert and run cleanly.
 fn evaluate_dsl(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, status: u16) -> bool {
     let expr = expr.trim();
 
-    // status_code == N
-    if let Some(rest) = expr.strip_prefix("status_code") {
-        let rest = rest.trim();
-        if let Some(val) = rest.strip_prefix("==") {
-            if let Ok(expected) = val.trim().parse::<u16>() {
-                return status == expected;
-            }
-        }
-        if let Some(val) = rest.strip_prefix("!=") {
-            if let Ok(expected) = val.trim().parse::<u16>() {
-                return status != expected;
-            }
-        }
-    }
-
-    // contains(body, "string")
-    if expr.starts_with("contains(") {
-        if let Some(inner) = expr.strip_prefix("contains(").and_then(|s| s.strip_suffix(")")) {
-            let parts: Vec<&str> = inner.splitn(2, ',').collect();
-            if parts.len() == 2 {
-                let source = match parts[0].trim() {
-                    "body" => body,
-                    "header" | "all" => &headers_to_string(headers),
-                    _ => body,
-                };
-                let needle = parts[1].trim().trim_matches('"').trim_matches('\'');
-                return source.contains(needle);
-            }
-        }
-    }
-
-    // len(body) > N
-    if expr.starts_with("len(body)") {
-        let rest = expr.strip_prefix("len(body)").unwrap().trim();
-        if let Some(val) = rest.strip_prefix(">") {
-            if let Ok(n) = val.trim().parse::<usize>() {
-                return body.len() > n;
-            }
-        }
-        if let Some(val) = rest.strip_prefix("<") {
-            if let Ok(n) = val.trim().parse::<usize>() {
-                return body.len() < n;
-            }
-        }
-    }
-
-    // AND/OR compound expressions: expr1 && expr2
+    // AND/OR — short-circuit at the top so we don't accidentally
+    // tokenise inside string literals further down. (Naive — doesn't
+    // respect string-literal quoting yet; community templates rarely
+    // put `&&` or `||` inside their literal strings.)
     if let Some(pos) = expr.find("&&") {
-        let left = &expr[..pos];
-        let right = &expr[pos + 2..];
-        return evaluate_dsl(left, body, headers, status)
-            && evaluate_dsl(right, body, headers, status);
+        return evaluate_dsl(&expr[..pos], body, headers, status)
+            && evaluate_dsl(&expr[pos + 2..], body, headers, status);
     }
     if let Some(pos) = expr.find("||") {
-        let left = &expr[..pos];
-        let right = &expr[pos + 2..];
-        return evaluate_dsl(left, body, headers, status)
-            || evaluate_dsl(right, body, headers, status);
+        return evaluate_dsl(&expr[..pos], body, headers, status)
+            || evaluate_dsl(&expr[pos + 2..], body, headers, status);
+    }
+
+    // status_code (==|!=|>=|<=|>|<) N
+    if let Some(rest) = expr.strip_prefix("status_code") {
+        let rest = rest.trim();
+        for (op, want_eq, want_lt) in &[
+            ("==", true,  false),
+            ("!=", false, false),
+            (">=", true,  false),
+            ("<=", true,  false),
+            (">",  false, false),
+            ("<",  false, true),
+        ] {
+            if let Some(val) = rest.strip_prefix(op) {
+                if let Ok(expected) = val.trim().parse::<u16>() {
+                    return match *op {
+                        "==" => status == expected,
+                        "!=" => status != expected,
+                        ">"  => status >  expected,
+                        ">=" => status >= expected,
+                        "<"  => status <  expected,
+                        "<=" => status <= expected,
+                        _    => *want_eq && !*want_lt,
+                    };
+                }
+            }
+        }
+    }
+
+    // contains(haystack, needle) — both args may be value expressions.
+    if let Some(args) = call_args(expr, "contains") {
+        if args.len() == 2 {
+            let hay = eval_value(&args[0], body, headers, status);
+            let needle = eval_value(&args[1], body, headers, status);
+            return hay.contains(needle.as_str());
+        }
+    }
+
+    // regex_match(pattern, source) → bool
+    if let Some(args) = call_args(expr, "regex_match") {
+        if args.len() == 2 {
+            let pattern = eval_value(&args[0], body, headers, status);
+            let source  = eval_value(&args[1], body, headers, status);
+            return Regex::new(&pattern).map(|r| r.is_match(&source)).unwrap_or(false);
+        }
+    }
+
+    // len(x) (==|!=|>=|<=|>|<) N — works for body, headers, or any
+    // value expression.
+    if expr.starts_with("len(") {
+        // Find the closing paren of the len(...) call, then a comparator.
+        if let Some(close) = expr.find(')') {
+            let inner = &expr[4..close];
+            let lhs_len = eval_value(inner, body, headers, status).len();
+            let rest = expr[close + 1..].trim();
+            for op in &["==", "!=", ">=", "<=", ">", "<"] {
+                if let Some(val) = rest.strip_prefix(op) {
+                    if let Ok(n) = val.trim().parse::<usize>() {
+                        return match *op {
+                            "==" => lhs_len == n,
+                            "!=" => lhs_len != n,
+                            ">"  => lhs_len >  n,
+                            ">=" => lhs_len >= n,
+                            "<"  => lhs_len <  n,
+                            "<=" => lhs_len <= n,
+                            _    => false,
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // Generic value-expression equality:
+    //   md5(body) == "expected-hex"
+    //   base64("hello") == "aGVsbG8="
+    //   header("Server") == "nginx"
+    for op in &["==", "!="] {
+        if let Some(pos) = expr.find(op) {
+            let lhs = expr[..pos].trim();
+            let rhs = expr[pos + op.len()..].trim();
+            let lv = eval_value(lhs, body, headers, status);
+            let rv = eval_value(rhs, body, headers, status);
+            return match *op {
+                "==" => lv == rv,
+                "!=" => lv != rv,
+                _    => false,
+            };
+        }
     }
 
     false
+}
+
+/// Evaluate a value expression to a string.
+///
+/// Supported forms:
+///   "literal"               → unquoted literal
+///   123                     → "123"
+///   body                    → response body
+///   status_code             → status as decimal string
+///   md5(x), sha1(x),        → hex digest of x
+///     sha256(x)
+///   base64(x), base64_decode(x)
+///   url_encode(x),
+///     url_decode(x)
+///   header("Server")        → response header (case-insensitive)
+///   concat(a, b, ...)       → string concatenation
+///   <unknown>               → returned as-is so equality compares the
+///                             raw token (covers identifiers that other
+///                             templates might use).
+fn eval_value(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, status: u16) -> String {
+    use base64::Engine;
+    let expr = expr.trim();
+
+    // String literal: "..." or '...'
+    if (expr.starts_with('"') && expr.ends_with('"') && expr.len() >= 2)
+        || (expr.starts_with('\'') && expr.ends_with('\'') && expr.len() >= 2)
+    {
+        return expr[1..expr.len() - 1].to_string();
+    }
+
+    // Bareword identifiers
+    match expr {
+        "body" | "all" => return body.to_string(),
+        "status_code"  => return status.to_string(),
+        ""             => return String::new(),
+        _ => {}
+    }
+
+    // Function calls
+    if let Some(args) = call_args(expr, "md5") {
+        if args.len() == 1 {
+            use md5::{Md5, Digest};
+            let v = eval_value(&args[0], body, headers, status);
+            return format!("{:x}", Md5::digest(v.as_bytes()));
+        }
+    }
+    if let Some(args) = call_args(expr, "sha1") {
+        if args.len() == 1 {
+            use sha1::{Sha1, Digest};
+            let v = eval_value(&args[0], body, headers, status);
+            return format!("{:x}", Sha1::digest(v.as_bytes()));
+        }
+    }
+    if let Some(args) = call_args(expr, "sha256") {
+        if args.len() == 1 {
+            use sha2::{Sha256, Digest};
+            let v = eval_value(&args[0], body, headers, status);
+            return format!("{:x}", Sha256::digest(v.as_bytes()));
+        }
+    }
+    if let Some(args) = call_args(expr, "base64") {
+        if args.len() == 1 {
+            let v = eval_value(&args[0], body, headers, status);
+            return base64::engine::general_purpose::STANDARD.encode(v.as_bytes());
+        }
+    }
+    if let Some(args) = call_args(expr, "base64_decode") {
+        if args.len() == 1 {
+            let v = eval_value(&args[0], body, headers, status);
+            return base64::engine::general_purpose::STANDARD
+                .decode(v.as_bytes())
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+        }
+    }
+    if let Some(args) = call_args(expr, "url_encode") {
+        if args.len() == 1 {
+            let v = eval_value(&args[0], body, headers, status);
+            return urlencoding::encode(&v).into_owned();
+        }
+    }
+    if let Some(args) = call_args(expr, "url_decode") {
+        if args.len() == 1 {
+            let v = eval_value(&args[0], body, headers, status);
+            return urlencoding::decode(&v)
+                .map(|c| c.into_owned())
+                .unwrap_or_default();
+        }
+    }
+    if let Some(args) = call_args(expr, "header") {
+        if args.len() == 1 {
+            let name = eval_value(&args[0], body, headers, status);
+            return headers
+                .get(name.as_str())
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+        }
+    }
+    if let Some(args) = call_args(expr, "concat") {
+        return args.iter()
+            .map(|a| eval_value(a, body, headers, status))
+            .collect::<Vec<_>>()
+            .join("");
+    }
+    if let Some(args) = call_args(expr, "len") {
+        if args.len() == 1 {
+            return eval_value(&args[0], body, headers, status).len().to_string();
+        }
+    }
+
+    // Number literal — return as-is (callers compare strings)
+    if expr.parse::<i64>().is_ok() {
+        return expr.to_string();
+    }
+
+    // Unknown identifier — return as-is so equality compares the raw
+    // token (covers `foo == bar` template patterns where one side is
+    // a known identifier we don't handle yet).
+    expr.to_string()
+}
+
+/// Parse a function call `name(arg1, arg2, ...)` into its arg list.
+/// Returns None if the input isn't a call to `name`. Handles balanced
+/// parens and quoted strings so `concat(md5(body), "abc")` parses to
+/// 2 args (`md5(body)` and `"abc"`), not 3.
+fn call_args(expr: &str, name: &str) -> Option<Vec<String>> {
+    let prefix = format!("{}(", name);
+    let stripped = expr.strip_prefix(&prefix)?;
+    let inner = stripped.strip_suffix(")")?;
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut args: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str: Option<char> = None;
+    let mut current = String::new();
+    for ch in inner.chars() {
+        if let Some(q) = in_str {
+            current.push(ch);
+            if ch == q { in_str = None; }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => { in_str = Some(ch); current.push(ch); }
+            '(' => { depth += 1; current.push(ch); }
+            ')' => { depth -= 1; current.push(ch); }
+            ',' if depth == 0 => {
+                args.push(current.trim().to_string());
+                current.clear();
+            }
+            c => current.push(c),
+        }
+    }
+    if !current.is_empty() || !args.is_empty() {
+        args.push(current.trim().to_string());
+    }
+    Some(args)
 }
 
 fn build_evidence(
@@ -685,5 +890,113 @@ fn parse_severity(s: &str) -> Severity {
         "medium" => Severity::Medium,
         "low" => Severity::Low,
         _ => Severity::Info,
+    }
+}
+
+#[cfg(test)]
+mod dsl_tests {
+    use super::*;
+
+    fn h() -> reqwest::header::HeaderMap {
+        let mut m = reqwest::header::HeaderMap::new();
+        m.insert("Server", "nginx/1.21".parse().unwrap());
+        m.insert("Content-Type", "text/html".parse().unwrap());
+        m
+    }
+
+    #[test] fn status_eq() {
+        assert!( evaluate_dsl("status_code == 200", "", &h(), 200));
+        assert!(!evaluate_dsl("status_code == 200", "", &h(), 404));
+    }
+
+    #[test] fn status_compare() {
+        assert!( evaluate_dsl("status_code >= 400", "", &h(), 500));
+        assert!( evaluate_dsl("status_code <  300", "", &h(), 200));
+        assert!(!evaluate_dsl("status_code >= 400", "", &h(), 200));
+    }
+
+    #[test] fn contains_body() {
+        assert!( evaluate_dsl("contains(body, \"hello\")", "hello world", &h(), 200));
+        assert!(!evaluate_dsl("contains(body, \"goodbye\")", "hello world", &h(), 200));
+    }
+
+    #[test] fn md5_eq_literal() {
+        // md5("hello") == "5d41402abc4b2a76b9719d911017c592"
+        let e = "md5(\"hello\") == \"5d41402abc4b2a76b9719d911017c592\"";
+        assert!(evaluate_dsl(e, "", &h(), 200));
+    }
+
+    #[test] fn sha1_eq_literal() {
+        // sha1("hello") == "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        let e = "sha1(\"hello\") == \"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d\"";
+        assert!(evaluate_dsl(e, "", &h(), 200));
+    }
+
+    #[test] fn sha256_eq_literal() {
+        let e = "sha256(\"hello\") == \"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\"";
+        assert!(evaluate_dsl(e, "", &h(), 200));
+    }
+
+    #[test] fn base64_roundtrip() {
+        assert!(evaluate_dsl("base64(\"hello\") == \"aGVsbG8=\"", "", &h(), 200));
+        assert!(evaluate_dsl("base64_decode(\"aGVsbG8=\") == \"hello\"", "", &h(), 200));
+    }
+
+    #[test] fn url_encode_decode() {
+        assert!(evaluate_dsl("url_encode(\"a b\") == \"a%20b\"", "", &h(), 200));
+        assert!(evaluate_dsl("url_decode(\"a%20b\") == \"a b\"", "", &h(), 200));
+    }
+
+    #[test] fn header_lookup() {
+        assert!(evaluate_dsl("header(\"Server\") == \"nginx/1.21\"", "", &h(), 200));
+    }
+
+    #[test] fn nested_md5_of_body() {
+        // md5("hello") on the body
+        let e = "md5(body) == \"5d41402abc4b2a76b9719d911017c592\"";
+        assert!(evaluate_dsl(e, "hello", &h(), 200));
+    }
+
+    #[test] fn concat_with_md5() {
+        // contains(concat(md5(body), "_suffix"), "_suffix")
+        let e = "contains(concat(md5(body), \"_suffix\"), \"_suffix\")";
+        assert!(evaluate_dsl(e, "hello", &h(), 200));
+    }
+
+    #[test] fn regex_match_works() {
+        // Raw-string literals don't process escapes, so r#"\d+"# is
+        // exactly four chars: \, d, +. Regex::new sees that as the
+        // standard "one or more digits" pattern.
+        assert!( evaluate_dsl(r#"regex_match("\d+", "abc 123 def")"#, "", &h(), 200));
+        assert!(!evaluate_dsl(r#"regex_match("\d+", "abc def")"#,     "", &h(), 200));
+    }
+
+    #[test] fn len_string() {
+        assert!(evaluate_dsl("len(\"hello\") == 5", "", &h(), 200));
+        assert!(evaluate_dsl("len(body) >= 5", "hello world", &h(), 200));
+    }
+
+    #[test] fn compound_and() {
+        let e = "status_code == 200 && contains(body, \"hello\")";
+        assert!( evaluate_dsl(e, "hello", &h(), 200));
+        assert!(!evaluate_dsl(e, "hello", &h(), 404));
+        assert!(!evaluate_dsl(e, "world", &h(), 200));
+    }
+
+    #[test] fn call_args_balanced() {
+        assert_eq!(
+            call_args("foo(a, b, c)", "foo").unwrap(),
+            vec!["a", "b", "c"]
+        );
+        // Nested parens stay grouped
+        assert_eq!(
+            call_args("concat(md5(body), \"x\")", "concat").unwrap(),
+            vec!["md5(body)", "\"x\""]
+        );
+        // Comma inside string literal isn't a separator
+        assert_eq!(
+            call_args("contains(body, \"a, b\")", "contains").unwrap(),
+            vec!["body", "\"a, b\""]
+        );
     }
 }
