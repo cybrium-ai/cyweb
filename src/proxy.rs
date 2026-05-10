@@ -49,6 +49,7 @@ pub async fn start(port: u16, state: ProxyState) -> std::io::Result<()> {
     eprintln!("\x1b[1;35m  Proxy listening on http://127.0.0.1:{}\x1b[0m", port);
     eprintln!("\x1b[2m  Configure your browser proxy → 127.0.0.1:{} (HTTP/HTTPS)\x1b[0m", port);
     eprintln!("\x1b[2m  HTTPS traffic is tunneled (CONNECT) without body inspection in this release.\x1b[0m");
+    eprintln!("\x1b[2m  For full MITM proxy + intercept + breakpoints, use the dedicated `cyproxy` tool.\x1b[0m");
 
     let mut next_id: u64 = 1;
     loop {

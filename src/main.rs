@@ -229,12 +229,16 @@ enum Commands {
     /// Show version info
     Version,
 
-    /// v0.8 Phase M — local intercept proxy. Listens on 127.0.0.1
-    /// and captures every request your browser sends through it,
-    /// surfacing them in the GUI's History tab. Plain HTTP is
-    /// fully captured; HTTPS CONNECT is tunneled (body not
-    /// inspected in this release; HTTPS MITM with a generated CA
-    /// is a v0.8.x follow-up).
+    /// Local intercept proxy. Listens on 127.0.0.1 and captures every
+    /// request your browser sends through it, surfacing them in the
+    /// GUI's History tab. Plain HTTP is fully captured; HTTPS CONNECT
+    /// is tunneled (body not inspected in this release).
+    ///
+    /// NOTE: This is a lightweight quick-capture mode — for serious
+    /// proxy work (HTTPS MITM with a generated CA, intercept queue,
+    /// breakpoints, session replay), use the dedicated `cyproxy`
+    /// tool. `cyweb proxy` is for "I just want to record a few
+    /// requests without setting anything up" cases.
     Proxy {
         /// Port for the HTTP intercept proxy.
         #[arg(long, default_value = "8989")]
