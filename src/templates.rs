@@ -327,6 +327,50 @@ async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<
     let mut variables: HashMap<String, String> = tpl.variables.clone();
     variables.insert("BaseURL".to_string(), target.to_string());
 
+    // v0.8.5 — interactsh OAST. If any step references
+    // {{interactsh-url}} / {{interactsh-host}}, mint a per-template
+    // token and stash it in `variables` so resolve_vars substitutes
+    // the token-namespaced subdomain at render time. Callbacks for
+    // this token are polled at the end of the template run.
+    let needs_oast = tpl.requests.iter().any(|r|
+        r.body.contains("interactsh")
+        || r.path.iter().any(|p| p.contains("interactsh"))
+        || r.headers.values().any(|v| v.contains("interactsh"))
+    );
+    let oast_token = if needs_oast {
+        let token = crate::interactsh::mint_token();
+        let host = crate::interactsh::oast_host();
+        variables.insert("interactsh-url".into(), format!("{}.{}", token, host));
+        variables.insert("interactsh-host".into(), format!("{}.{}", token, host));
+        variables.insert("interactsh-protocol".into(), "http".into());
+        Some(token)
+    } else {
+        None
+    };
+
+    // v0.8.5 — Non-HTTP protocol dispatch. DNS-only, TCP-only, and
+    // headless templates run through their own module. We dispatch
+    // BEFORE the HTTP path so a template that only carries `dns:`
+    // or `tcp:` blocks doesn't fall through into the HTTP request
+    // loop with zero requests.
+    if !tpl.dns.is_empty() {
+        findings.extend(crate::protocol_runners::run_dns(target, tpl).await);
+    }
+    if !tpl.tcp.is_empty() {
+        findings.extend(crate::protocol_runners::run_tcp(target, tpl).await);
+    }
+    let is_headless = tpl.info.tags.iter().any(|t| t == "headless");
+    if is_headless {
+        findings.extend(crate::protocol_runners::run_headless(target, tpl).await);
+        // Headless templates carry their HTTP `requests:` block but
+        // it's been routed through Chrome — don't double-execute.
+        return findings;
+    }
+    if !tpl.requests.is_empty() && (!tpl.dns.is_empty() || !tpl.tcp.is_empty()) && tpl.workflows.is_empty() {
+        // Mixed templates (DNS + HTTP, TCP + HTTP) still continue to
+        // the HTTP path below — DNS/TCP just augment what we found.
+    }
+
     // v0.8.4 — Workflow templates execute differently from HTTP
     // templates: they reference other templates and chain
     // subtemplates conditionally. The full templates registry isn't
@@ -451,6 +495,33 @@ async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<
                     tpl.info.name,
                 );
             }
+        }
+    }
+
+    // v0.8.5 — Poll OAST callbacks. If the template referenced
+    // interactsh and any callback hit our token-namespaced
+    // subdomain, that's a confirmed blind interaction (blind SSRF /
+    // RCE / XXE). Each callback becomes a high-severity finding.
+    if let Some(token) = oast_token {
+        let callbacks = crate::interactsh::poll_callbacks(client, &token).await;
+        for cb in callbacks {
+            findings.push(Finding {
+                id: format!("CYWEB-OAST-{}", tpl.id),
+                title: format!("Out-of-band interaction confirmed: {}", tpl.info.name),
+                severity: Severity::High,
+                category: "Blind Interaction (OAST)".into(),
+                description: format!(
+                    "Target initiated a {} callback to the OAST canary subdomain — \
+                     proves the injected payload reached a code path that performed \
+                     network egress on attacker-controlled input. Caller: {}.",
+                    cb.protocol, cb.remote_address,
+                ),
+                evidence: cb.raw_request,
+                url: target.to_string(),
+                cwe: tpl.info.cwe.first().cloned(),
+                remediation: tpl.info.remediation.clone(),
+                vuln_class: None,
+            });
         }
     }
 
@@ -649,7 +720,7 @@ fn evaluate_single_matcher(
 /// `base64_decode`, `url_encode`, `url_decode`, `len(string)`,
 /// `regex_match`) so upstream templates that use them in their
 /// `dsl:` matcher expressions convert and run cleanly.
-fn evaluate_dsl(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, status: u16) -> bool {
+pub fn evaluate_dsl(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, status: u16) -> bool {
     let expr = expr.trim();
 
     // AND/OR — short-circuit at the top so we don't accidentally
@@ -866,6 +937,107 @@ fn eval_value(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, stat
         }
     }
 
+    // v0.8.5 — edge-case DSL helpers used by ~3% of upstream
+    // templates. Each is a pure runtime expression — no side
+    // effects, no I/O — so they're safe to evaluate inside the
+    // matcher path.
+    if expr == "unix_time()" || expr == "now()" {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+        return n.to_string();
+    }
+    if let Some(args) = call_args(expr, "unix_time") {
+        // unix_time(offset_secs) — used by templates that want a
+        // time stamp `N` seconds in the past/future.
+        if args.len() == 1 {
+            let offset: i64 = eval_value(&args[0], body, headers, status).parse().unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64).unwrap_or(0);
+            return (now + offset).to_string();
+        }
+    }
+    if let Some(args) = call_args(expr, "rand_int") {
+        // rand_int(min, max) — inclusive bounds. Templates use
+        // this for cache-busting query params.
+        use rand::Rng;
+        if args.len() == 2 {
+            let lo: i64 = eval_value(&args[0], body, headers, status).parse().unwrap_or(0);
+            let hi: i64 = eval_value(&args[1], body, headers, status).parse().unwrap_or(lo + 1);
+            if hi > lo {
+                return rand::thread_rng().gen_range(lo..=hi).to_string();
+            }
+            return lo.to_string();
+        }
+        // rand_int() — full i32 range.
+        if args.is_empty() {
+            return rand::thread_rng().gen::<i32>().to_string();
+        }
+    }
+    if let Some(args) = call_args(expr, "gen_random") {
+        // gen_random(n) — n random alphanumeric characters.
+        // Used heavily for blind-injection markers.
+        use rand::Rng;
+        let n: usize = if args.is_empty() {
+            8
+        } else {
+            eval_value(&args[0], body, headers, status).parse().unwrap_or(8)
+        };
+        const ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let mut rng = rand::thread_rng();
+        return (0..n).map(|_| ALPHA[rng.gen_range(0..ALPHA.len())] as char).collect();
+    }
+    if let Some(args) = call_args(expr, "repeat") {
+        // repeat(s, n) — repeat the string n times. Buffer-overflow
+        // probes use repeat("A", 5000).
+        if args.len() == 2 {
+            let s = eval_value(&args[0], body, headers, status);
+            let n: usize = eval_value(&args[1], body, headers, status).parse().unwrap_or(0);
+            // Cap at 1 MiB to keep a malformed template from OOM-ing
+            // the scanner.
+            let n = n.min(1_048_576 / s.len().max(1));
+            return s.repeat(n);
+        }
+    }
+    if let Some(args) = call_args(expr, "to_lower") {
+        if args.len() == 1 {
+            return eval_value(&args[0], body, headers, status).to_lowercase();
+        }
+    }
+    if let Some(args) = call_args(expr, "to_upper") {
+        if args.len() == 1 {
+            return eval_value(&args[0], body, headers, status).to_uppercase();
+        }
+    }
+    if let Some(args) = call_args(expr, "trim") {
+        if args.len() == 1 {
+            return eval_value(&args[0], body, headers, status).trim().to_string();
+        }
+    }
+    if let Some(args) = call_args(expr, "replace") {
+        if args.len() == 3 {
+            let s = eval_value(&args[0], body, headers, status);
+            let from = eval_value(&args[1], body, headers, status);
+            let to = eval_value(&args[2], body, headers, status);
+            return s.replace(&from, &to);
+        }
+    }
+    if let Some(args) = call_args(expr, "hex_encode") {
+        if args.len() == 1 {
+            let v = eval_value(&args[0], body, headers, status);
+            return hex::encode(v.as_bytes());
+        }
+    }
+    if let Some(args) = call_args(expr, "hex_decode") {
+        if args.len() == 1 {
+            let v = eval_value(&args[0], body, headers, status);
+            return hex::decode(v.as_bytes())
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+        }
+    }
+
     // Number literal — return as-is (callers compare strings)
     if expr.parse::<i64>().is_ok() {
         return expr.to_string();
@@ -954,7 +1126,7 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() > max { format!("{}...", &s[..max]) } else { s.to_string() }
 }
 
-fn parse_severity(s: &str) -> Severity {
+pub fn parse_severity(s: &str) -> Severity {
     match s.to_lowercase().as_str() {
         "critical" => Severity::Critical,
         "high" => Severity::High,
@@ -1069,5 +1241,62 @@ mod dsl_tests {
             call_args("contains(body, \"a, b\")", "contains").unwrap(),
             vec!["body", "\"a, b\""]
         );
+    }
+
+    // v0.8.5 — edge-case DSL helpers
+    #[test] fn unix_time_nonzero() {
+        let v = eval_value("unix_time()", "", &h(), 200);
+        let n: u64 = v.parse().expect("unix_time should be numeric");
+        assert!(n > 1_700_000_000, "unix_time should be a recent epoch second");
+    }
+
+    #[test] fn unix_time_with_offset() {
+        let now: i64 = eval_value("unix_time()", "", &h(), 200).parse().unwrap();
+        let plus_60: i64 = eval_value("unix_time(60)", "", &h(), 200).parse().unwrap();
+        assert!(plus_60 >= now + 59 && plus_60 <= now + 61);
+    }
+
+    #[test] fn rand_int_range() {
+        for _ in 0..50 {
+            let v: i64 = eval_value("rand_int(10, 20)", "", &h(), 200).parse().unwrap();
+            assert!(v >= 10 && v <= 20, "rand_int(10,20) returned {}", v);
+        }
+    }
+
+    #[test] fn gen_random_length_and_charset() {
+        let s = eval_value("gen_random(16)", "", &h(), 200);
+        assert_eq!(s.len(), 16);
+        assert!(s.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test] fn repeat_string() {
+        let s = eval_value("repeat(\"AB\", 3)", "", &h(), 200);
+        assert_eq!(s, "ABABAB");
+    }
+
+    #[test] fn repeat_capped() {
+        // repeat with crazy counts must not blow memory — should cap.
+        let s = eval_value("repeat(\"AAAA\", 99999999)", "", &h(), 200);
+        assert!(s.len() <= 1_048_576);
+    }
+
+    #[test] fn to_lower_to_upper_trim() {
+        assert_eq!(eval_value("to_lower(\"HELLO\")", "", &h(), 200), "hello");
+        assert_eq!(eval_value("to_upper(\"hello\")", "", &h(), 200), "HELLO");
+        assert_eq!(eval_value("trim(\"  hi  \")", "", &h(), 200), "hi");
+    }
+
+    #[test] fn replace_substring() {
+        assert_eq!(
+            eval_value("replace(\"hello world\", \"world\", \"cyweb\")", "", &h(), 200),
+            "hello cyweb"
+        );
+    }
+
+    #[test] fn hex_encode_decode_roundtrip() {
+        let enc = eval_value("hex_encode(\"abc\")", "", &h(), 200);
+        assert_eq!(enc, "616263");
+        let dec = eval_value("hex_decode(\"616263\")", "", &h(), 200);
+        assert_eq!(dec, "abc");
     }
 }

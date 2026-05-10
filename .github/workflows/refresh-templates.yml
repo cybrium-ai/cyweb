@@ -1,0 +1,123 @@
+# v0.8.5 — nightly template refresh.
+#
+# Cyweb's image bakes a converted snapshot of the upstream community
+# template repo at release time. New CVE templates land upstream every
+# day; without a refresh job, customers running a v0.8.5 image are
+# stuck with the templates that converted cleanly on release day.
+#
+# This workflow runs every night at 03:17 UTC (off-peak, staggered
+# from release.yml's UTC minute):
+#   1. Pulls latest cyweb release image (templates baked in)
+#   2. Re-runs `cyweb convert-templates` against fresh upstream
+#   3. Builds a new image tagged `templates-fresh-YYYYMMDD` and
+#      `templates-latest`
+#   4. Pushes to GHCR
+#
+# Operators pin to `templates-latest` if they want the newest CVE
+# coverage, or to a versioned `vX.Y.Z` tag for reproducibility.
+#
+# Manual trigger: workflow_dispatch — useful when a high-impact CVE
+# template lands upstream and we want to push refreshed images
+# without waiting for the next nightly window.
+
+name: Refresh templates (nightly)
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Date stamp
+        id: stamp
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Pull latest cyweb release image
+        run: |
+          # We need a cyweb binary that can run `convert-templates`.
+          # Pull the most recent release image and copy the binary
+          # out — saves us a full Rust build cycle every night.
+          docker pull ghcr.io/cybrium-ai/cyweb:latest
+          docker create --name cyweb-extract ghcr.io/cybrium-ai/cyweb:latest
+          docker cp cyweb-extract:/usr/local/bin/cyweb /tmp/cyweb-converter
+          docker rm cyweb-extract
+          chmod +x /tmp/cyweb-converter
+
+      - name: Clone upstream templates (latest)
+        run: |
+          git clone --depth 1 \
+            https://github.com/projectdiscovery/nuclei-templates \
+            /tmp/upstream-templates
+
+      - name: Convert templates
+        run: |
+          mkdir -p templates-converted
+          /tmp/cyweb-converter convert-templates \
+            --input /tmp/upstream-templates \
+            --output templates-converted/ \
+            || echo "convert-templates exited non-zero — using whatever converted cleanly"
+          CONVERTED=$(find templates-converted -name '*.yaml' | wc -l | tr -d ' ')
+          echo "Converted $CONVERTED templates from upstream"
+          echo "CONVERTED=$CONVERTED" >> "$GITHUB_ENV"
+
+      - name: Skip nightly build for empty conversion
+        if: env.CONVERTED == '0'
+        run: |
+          echo "Conversion produced 0 templates — skipping image build"
+          exit 1
+
+      # We only need linux/amd64 + linux/arm64 platforms baked with
+      # the new templates. Re-use the published cyweb binary inside
+      # the image — only the templates layer changes.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage refreshed-templates Dockerfile
+        run: |
+          cat > Dockerfile.templates-only <<'EOF'
+          # Templates-refresh image — same cyweb binary as :latest, but
+          # with a fresh template snapshot baked in.
+          FROM ghcr.io/cybrium-ai/cyweb:latest
+          # Wipe the old set so we don't accumulate stale templates
+          # between refreshes.
+          USER root
+          RUN rm -rf /opt/cyweb/templates && mkdir -p /opt/cyweb/templates
+          COPY templates-converted/ /opt/cyweb/templates/
+          EOF
+
+      - name: Build + push refreshed image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file:    Dockerfile.templates-only
+          push:    true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/cybrium-ai/cyweb:templates-${{ steps.stamp.outputs.date }}
+            ghcr.io/cybrium-ai/cyweb:templates-latest
+
+      - name: Summary
+        run: |
+          echo "## Nightly template refresh" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Date: ${{ steps.stamp.outputs.date }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Converted templates: ${{ env.CONVERTED }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tags pushed:" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - ghcr.io/cybrium-ai/cyweb:templates-${{ steps.stamp.outputs.date }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - ghcr.io/cybrium-ai/cyweb:templates-latest" >> "$GITHUB_STEP_SUMMARY"

@@ -26,6 +26,9 @@ mod proxy;
 mod hardware_rot;
 mod templates;
 mod template_convert;
+// v0.8.5 — protocol runners (DNS / TCP / headless) + interactsh OAST.
+mod protocol_runners;
+mod interactsh;
 // Sprint 76 — modern vuln classes that need Rust runtime extensions.
 // race needs concurrent-burst orchestration; websocket needs a WS client.
 mod race;

@@ -102,9 +102,22 @@ fn convert_single(src_yaml: &str) -> Result<String, String> {
     // order.
     let workflows = tmpl.get("workflows");
     let http = tmpl.get("http").or_else(|| tmpl.get("requests"));
+    // v0.8.5 — DNS / TCP / headless are now first-class template kinds
+    // with runtime support in `protocol_runners`. The converter emits
+    // them verbatim (matchers + extractors are the same shape) and the
+    // runtime dispatches based on which block is present.
+    let dns = tmpl.get("dns");
+    let tcp = tmpl.get("tcp")
+        .or_else(|| tmpl.get("network")); // upstream legacy alias
+    let is_headless = tmpl.get("headless").is_some()
+        || tmpl.get("info")
+            .and_then(|i| i.get("tags"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.split(',').any(|tag| tag.trim() == "headless"))
+            .unwrap_or(false);
 
-    if workflows.is_none() && http.is_none() {
-        return Err("Not an HTTP template (DNS/TCP/headless not supported yet)".into());
+    if workflows.is_none() && http.is_none() && dns.is_none() && tcp.is_none() && !is_headless {
+        return Err("Template has no executable block (http / requests / dns / tcp / workflows / headless)".into());
     }
 
     // Build cyweb template
@@ -180,6 +193,56 @@ fn convert_single(src_yaml: &str) -> Result<String, String> {
             .map_err(|e| format!("Serialization error: {}", e));
     }
 
+    // v0.8.5 — DNS path. Upstream DNS templates use:
+    //   dns:
+    //     - name: "{{FQDN}}"
+    //       type: TXT
+    //       matchers: [...]
+    // We emit the same shape; cyweb's runtime resolves it via
+    // hickory-resolver and runs matchers against the answer.
+    if let Some(dns_block) = dns {
+        if let Some(seq) = dns_block.as_sequence() {
+            let converted: Vec<serde_yaml::Value> = seq.iter()
+                .map(convert_dns_step)
+                .collect();
+            output.insert(
+                serde_yaml::Value::String("dns".into()),
+                serde_yaml::Value::Sequence(converted),
+            );
+        }
+    }
+
+    // v0.8.5 — TCP path. Upstream uses `network:` historically and
+    // `tcp:` in newer templates; both map to cyweb's `tcp:` block.
+    if let Some(tcp_block) = tcp {
+        if let Some(seq) = tcp_block.as_sequence() {
+            let converted: Vec<serde_yaml::Value> = seq.iter()
+                .map(convert_tcp_step)
+                .collect();
+            output.insert(
+                serde_yaml::Value::String("tcp".into()),
+                serde_yaml::Value::Sequence(converted),
+            );
+        }
+    }
+
+    // If a template is DNS-only or TCP-only (no HTTP requests), emit
+    // and return — there's nothing else to convert.
+    if http.is_none() && (dns.is_some() || tcp.is_some()) {
+        return serde_yaml::to_string(&serde_yaml::Value::Mapping(output))
+            .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // Headless-only path (templates tagged "headless" with no http
+    // block). Tag is preserved in info_out above; runtime sees the
+    // tag and dispatches through the chromiumoxide path. If the
+    // template ALSO has http requests, those convert as normal and
+    // the runtime's headless dispatch picks one path.
+    if http.is_none() && is_headless {
+        return serde_yaml::to_string(&serde_yaml::Value::Mapping(output))
+            .map_err(|e| format!("Serialization error: {}", e));
+    }
+
     // HTTP path — fall through with `http` (which we know is Some
     // here because the early-return guard above caught the
     // "neither workflows nor http" case).
@@ -232,6 +295,69 @@ fn convert_workflow_step(step: &serde_yaml::Value) -> serde_yaml::Value {
         }
     }
 
+    serde_yaml::Value::Mapping(out)
+}
+
+/// v0.8.5 — DNS step converter. Upstream schema:
+///   - name: "{{FQDN}}"
+///     type: TXT
+///     matchers: [...]
+fn convert_dns_step(step: &serde_yaml::Value) -> serde_yaml::Value {
+    let mut out = serde_yaml::Mapping::new();
+    if let Some(n) = step.get("name") {
+        out.insert(serde_yaml::Value::String("name".into()), n.clone());
+    } else {
+        out.insert(serde_yaml::Value::String("name".into()), serde_yaml::Value::String("{{Hostname}}".into()));
+    }
+    let qtype = step.get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("A")
+        .to_uppercase();
+    out.insert(serde_yaml::Value::String("type".into()), serde_yaml::Value::String(qtype));
+    if let Some(m) = step.get("matchers") {
+        out.insert(serde_yaml::Value::String("matchers".into()), m.clone());
+    }
+    if let Some(e) = step.get("extractors") {
+        out.insert(serde_yaml::Value::String("extractors".into()), e.clone());
+    }
+    serde_yaml::Value::Mapping(out)
+}
+
+/// v0.8.5 — TCP step converter. Upstream schema:
+///   - host: ["{{Hostname}}:21"]
+///     inputs: [{data: "..."}]
+///     read-size: 4096
+///     matchers: [...]
+fn convert_tcp_step(step: &serde_yaml::Value) -> serde_yaml::Value {
+    let mut out = serde_yaml::Mapping::new();
+    // host can be string or sequence; we collapse to first element
+    // (cyweb's runtime takes a single host:port string per step).
+    let host = match step.get("host") {
+        Some(serde_yaml::Value::Sequence(seq)) => seq.first().cloned()
+            .unwrap_or(serde_yaml::Value::String("{{Hostname}}".into())),
+        Some(v) => v.clone(),
+        None => serde_yaml::Value::String("{{Hostname}}".into()),
+    };
+    out.insert(serde_yaml::Value::String("host".into()), host);
+    // `inputs` is a list of {data: ...} maps in upstream; we take
+    // the first input's data field as the payload to send.
+    if let Some(inputs) = step.get("inputs") {
+        if let Some(seq) = inputs.as_sequence() {
+            if let Some(first) = seq.first() {
+                if let Some(data) = first.get("data") {
+                    out.insert(serde_yaml::Value::String("data".into()), data.clone());
+                }
+            }
+        }
+    } else if let Some(data) = step.get("data") {
+        out.insert(serde_yaml::Value::String("data".into()), data.clone());
+    }
+    if let Some(m) = step.get("matchers") {
+        out.insert(serde_yaml::Value::String("matchers".into()), m.clone());
+    }
+    if let Some(e) = step.get("extractors") {
+        out.insert(serde_yaml::Value::String("extractors".into()), e.clone());
+    }
     serde_yaml::Value::Mapping(out)
 }
 
@@ -526,15 +652,82 @@ workflows:
     }
 
     #[test]
-    fn neither_http_nor_workflows_rejected() {
+    fn empty_template_rejected() {
+        // v0.8.5 — DNS/TCP/headless are now accepted; the rejection
+        // path only fires when the template has NONE of the executable
+        // blocks at all.
+        let yaml = r#"
+id: nothing
+info: { name: nothing, severity: info }
+"#;
+        let err = convert_single(yaml).expect_err("template with no executable block is rejected");
+        assert!(err.contains("no executable block"));
+    }
+
+    #[test]
+    fn dns_only_template_converts() {
         let yaml = r#"
 id: dns-only
 info: { name: DNS only, severity: info }
 dns:
-  - name: example.com
-    type: A
+  - name: "{{FQDN}}"
+    type: TXT
+    matchers:
+      - type: word
+        words: ["v=spf1"]
 "#;
-        let err = convert_single(yaml).expect_err("DNS-only template should be rejected");
-        assert!(err.contains("Not an HTTP template"));
+        let result = convert_single(yaml).expect("DNS-only converts in v0.8.5");
+        assert!(result.contains("dns:"));
+        assert!(result.contains("type: TXT"));
+        assert!(result.contains("v=spf1"));
+    }
+
+    #[test]
+    fn tcp_only_template_converts() {
+        let yaml = r#"
+id: tcp-banner
+info: { name: TCP banner, severity: info }
+tcp:
+  - host: ["{{Hostname}}:21"]
+    inputs:
+      - data: ""
+    matchers:
+      - type: word
+        words: ["220"]
+"#;
+        let result = convert_single(yaml).expect("TCP-only converts in v0.8.5");
+        assert!(result.contains("tcp:"));
+        assert!(result.contains("{{Hostname}}:21"));
+    }
+
+    #[test]
+    fn network_alias_for_tcp_converts() {
+        // upstream legacy used `network:` instead of `tcp:`
+        let yaml = r#"
+id: network-banner
+info: { name: Network banner, severity: info }
+network:
+  - host: ["{{Hostname}}:1433"]
+    inputs:
+      - data: "x"
+    matchers:
+      - type: word
+        words: ["MSSQL"]
+"#;
+        let result = convert_single(yaml).expect("network: alias accepted");
+        assert!(result.contains("tcp:"));
+    }
+
+    #[test]
+    fn headless_only_template_converts() {
+        let yaml = r#"
+id: headless-only
+info:
+  name: Headless template
+  severity: info
+  tags: cve,headless
+"#;
+        let result = convert_single(yaml).expect("headless-tagged template converts");
+        assert!(result.contains("headless"));
     }
 }
