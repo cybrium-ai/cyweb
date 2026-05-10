@@ -1,0 +1,35 @@
+# Multi-step form login: username on page 1, password on page 2.
+# Common pattern for IdPs that detect the username before showing
+# the password field (helps with passwordless / SSO branching).
+name: "Multi-step form login"
+
+steps:
+  # Step 1 — fetch the username page so we can pull the CSRF token
+  # the form stamps into a hidden field.
+  - name: get-username-page
+    method: GET
+    url: "https://app.example.com/login"
+    extract:
+      csrf: 'name="_csrf"\s+value="([^"]+)"'
+
+  # Step 2 — POST the username; the IdP responds with the password
+  # page and a refreshed CSRF token.
+  - name: submit-username
+    method: POST
+    url: "https://app.example.com/login/check-username"
+    body: "username={{user}}&_csrf={{csrf}}"
+    extract:
+      csrf: 'name="_csrf"\s+value="([^"]+)"'
+
+  # Step 3 — submit the password. Cookies from step 2 are auto-
+  # attached so the IdP recognises the username we already supplied.
+  - name: submit-password
+    method: POST
+    url: "https://app.example.com/login/check-password"
+    body: "password={{pass}}&_csrf={{csrf}}"
+    follow_redirects: true
+
+# After the script runs, every cyweb scan request reuses the
+# session cookies captured during the steps. No explicit `apply:`
+# block needed — captured Set-Cookie values flow through
+# automatically.

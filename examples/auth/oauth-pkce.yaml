@@ -1,0 +1,41 @@
+# OAuth2 Authorization Code + PKCE flow.
+# Cyweb auto-injects {{pkce_verifier}} (96-char URL-safe random)
+# and {{pkce_challenge}} (base64url(sha256(verifier))) before the
+# first step. State + nonce are also auto-injected.
+name: "OAuth2 PKCE"
+
+steps:
+  # Step 1 — hit the /authorize endpoint. We don't follow the
+  # redirect because we need to scrape the login form's CSRF token
+  # and the IdP will redirect us straight there if we let it.
+  - name: authorize
+    method: GET
+    url: "https://idp.example.com/oauth2/authorize?response_type=code&client_id=cyweb-scan&redirect_uri=https://app.example.com/cb&code_challenge={{pkce_challenge}}&code_challenge_method=S256&state={{state}}&nonce={{nonce}}"
+    follow_redirects: true
+    extract:
+      csrf: 'name="_csrf"\s+value="([^"]+)"'
+
+  # Step 2 — submit credentials. We extract the auth code from the
+  # 302 Location header.
+  - name: submit-credentials
+    method: POST
+    url: "https://idp.example.com/login"
+    body: "username={{user}}&password={{pass}}&_csrf={{csrf}}"
+    follow_redirects: false
+    extract:
+      auth_code: 'location: .*[?&]code=([^&]+)'
+
+  # Step 3 — exchange the code for an access token.
+  - name: exchange-code
+    method: POST
+    url: "https://idp.example.com/oauth2/token"
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+    body: "grant_type=authorization_code&code={{auth_code}}&code_verifier={{pkce_verifier}}&client_id=cyweb-scan&redirect_uri=https://app.example.com/cb"
+    extract:
+      access_token: '"access_token":"([^"]+)"'
+
+# Bake the bearer token into every subsequent scan request.
+apply:
+  headers:
+    Authorization: "Bearer {{access_token}}"

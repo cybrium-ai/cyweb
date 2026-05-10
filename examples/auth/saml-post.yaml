@@ -1,0 +1,42 @@
+# SAML 2.0 POST-binding flow.
+# The IdP returns a SAMLResponse in a hidden form field; the script
+# captures it and POSTs to the SP's ACS endpoint to establish a
+# session.
+name: "SAML POST binding"
+
+steps:
+  # Step 1 — visit the SP entry point. The SP redirects to the IdP
+  # with a SAMLRequest in the URL.
+  - name: sp-entry
+    method: GET
+    url: "https://app.example.com/saml/login"
+    follow_redirects: true
+    extract:
+      csrf: 'name="_csrf"\s+value="([^"]+)"'
+
+  # Step 2 — submit credentials at the IdP login page. The IdP
+  # returns an HTML form with a hidden SAMLResponse field that auto-
+  # POSTs (in a browser) back to the SP's ACS URL.
+  - name: idp-login
+    method: POST
+    url: "https://idp.example.com/login"
+    body: "username={{user}}&password={{pass}}&_csrf={{csrf}}"
+    follow_redirects: true
+    extract:
+      saml_response: 'name="SAMLResponse"\s+value="([^"]+)"'
+      relay_state: 'name="RelayState"\s+value="([^"]+)"'
+      acs_url: 'action="(https://[^"]+/saml/acs)"'
+
+  # Step 3 — POST the SAMLResponse to the SP's ACS endpoint.
+  # Successful processing sets a session cookie that flows into
+  # subsequent scan requests automatically.
+  - name: post-to-acs
+    method: POST
+    url: "{{acs_url}}"
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+    body: "SAMLResponse={{saml_response}}&RelayState={{relay_state}}"
+    follow_redirects: true
+
+# No `apply:` block needed — the SP session cookie attaches
+# automatically via captured Set-Cookie headers.

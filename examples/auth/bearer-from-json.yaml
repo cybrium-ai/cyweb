@@ -1,0 +1,21 @@
+# Simple "POST creds → extract JWT from JSON response" flow.
+# Common for SPAs / mobile-API style auth where the login endpoint
+# returns a JSON envelope containing the bearer token.
+name: "Bearer token from JSON login"
+
+steps:
+  - name: api-login
+    method: POST
+    url: "https://api.example.com/auth/login"
+    headers:
+      Content-Type: "application/json"
+    body: '{"email":"{{user}}","password":"{{pass}}"}'
+    extract:
+      # Most APIs return either {"access_token": "..."} or
+      # {"token": "...", "refresh_token": "..."} or
+      # {"data": {"jwt": "..."}}. Adjust the regex to match yours.
+      access_token: '"(?:access_token|token|jwt)"\s*:\s*"([^"]+)"'
+
+apply:
+  headers:
+    Authorization: "Bearer {{access_token}}"
