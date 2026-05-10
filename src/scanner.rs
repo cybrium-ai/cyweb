@@ -346,13 +346,18 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     eprintln!("{}", "───────────────────────────────────────────────────".dimmed());
     eprintln!();
 
-    // Parse tuning filter
-    let tuning: std::collections::HashSet<String> = config.tuning.as_deref()
-        .map(|t| t.split(',').map(|s| s.trim().to_lowercase()).collect())
-        .unwrap_or_default();
-    let run_phase = |phase: &str| -> bool {
-        tuning.is_empty() || tuning.contains(phase)
-    };
+    // v0.8.6 — Two-axis tuning. Phase filter gates which scan stages
+    // run (legacy behaviour preserved); class filter applies to
+    // findings before they enter all_findings. See src/tuning.rs.
+    let tuning_sel = crate::tuning::TuningSelection::parse(config.tuning.as_deref());
+    if !tuning_sel.unknown.is_empty() {
+        eprintln!(
+            "  {} unknown tuning slots ignored: {} (run `cyweb --tuning-list` to see all)",
+            "warn:".yellow().bold(),
+            tuning_sel.unknown.join(", "),
+        );
+    }
+    let run_phase = |phase: &str| -> bool { tuning_sel.run_phase(phase) };
 
     // Create save directory if needed
     if let Some(ref dir) = config.save_dir {
@@ -703,6 +708,24 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // Deduplicate findings
     all_findings.sort_by(|a, b| a.id.cmp(&b.id));
     all_findings.dedup_by(|a, b| a.id == b.id);
+
+    // v0.8.6 — Apply vuln-class filter. When the operator passed
+    // class slots in --tuning, drop findings whose vuln_class
+    // doesn't match. Phase filtering already happened at run-time
+    // by gating the producing stages.
+    if !tuning_sel.classes.is_empty() {
+        let before = all_findings.len();
+        all_findings.retain(|f| tuning_sel.keep_finding(f));
+        let dropped = before - all_findings.len();
+        if dropped > 0 {
+            eprintln!(
+                "  {} {} finding(s) dropped by class filter ({})",
+                "tuning:".dimmed(),
+                dropped,
+                tuning_sel.classes.iter().cloned().collect::<Vec<_>>().join(","),
+            );
+        }
+    }
 
     let duration_ms = start.elapsed().as_millis() as u64;
     let completed_at = chrono::Utc::now().to_rfc3339();
