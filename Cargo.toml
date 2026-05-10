@@ -39,6 +39,18 @@ walkdir = "2"
 # rustls feature so we don't drag in OpenSSL.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 http = "1"
+# v0.8 Phase D — `--gui` flag spins up a local web UI on 127.0.0.1:8990
+# showing scan findings with Cybrium branding. axum 0.7 sits on hyper 1
+# which is already a transitive dep via reqwest, so we don't pull in a
+# parallel runtime. tower is required for axum's middleware stack.
+axum = "0.7"
+tower = "0.5"
+# v0.8 Phase N — `--ajax-spider` flag drives a headless Chromium via
+# Chrome DevTools Protocol to crawl JS-rendered SPAs. chromiumoxide
+# pulls in async-tungstenite + websocket transport but no Chromium
+# binary itself; the operator needs Chrome / Chromium installed
+# locally (auto-discovered, or override via CYWEB_CHROME_PATH env).
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], default-features = false }
 
 [profile.release]
 opt-level = 3

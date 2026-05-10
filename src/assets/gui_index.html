@@ -1,0 +1,1571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Cybrium — cyweb findings</title>
+<style>
+  /* ── Cybrium dark theme (matches platform tokens) ─────────────────────── */
+  :root {
+    --bg:        #0a0a13;
+    --surface:   #14141f;
+    --surface-2: #1c1c2a;
+    --border:    #2a2a3a;
+    --text:      #e4e4ea;
+    --muted:     #8a8a98;
+    --primary:   #9747ff;
+    --primary-2: #b074ff;
+    --accent:    #06b6d4;
+
+    --sev-critical: #dc2626;
+    --sev-high:     #f97316;
+    --sev-medium:   #facc15;
+    --sev-low:      #3b82f6;
+    --sev-info:     #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.5;
+    min-height: 100vh;
+  }
+  a { color: var(--primary-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, monospace; font-size: 12px; }
+
+  /* ── Header bar ────────────────────────────────────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 28px;
+    background: linear-gradient(180deg, #14141f 0%, #0d0d18 100%);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header .brand-shield { height: 30px; width: auto; }
+  header .brand-word   { height: 22px; width: auto; margin-left: -2px; }
+  header .target {
+    margin-left: 24px; color: var(--muted); font-family: ui-monospace, monospace;
+    font-size: 13px;
+  }
+  header .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+  .export-group { display: flex; gap: 8px; margin-left: 16px; }
+  button {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font-size: 13px;
+    transition: all 120ms;
+  }
+  button:hover { border-color: var(--primary); color: var(--primary-2); }
+
+  /* ── Layout ────────────────────────────────────────────────────────────── */
+  main { padding: 24px 28px; max-width: 1800px; margin: 0 auto; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+  .layout-main { min-width: 0; }
+
+  /* Sites sidebar (Phase K) */
+  .sites-sidebar {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    position: sticky; top: 84px; max-height: calc(100vh - 100px);
+    display: flex; flex-direction: column;
+  }
+  .sites-header {
+    display: flex; align-items: center;
+    padding: 12px 14px; font-weight: 600; font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sites-header span:first-child { flex: 1; }
+  .sites-clear {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 18px; padding: 0 8px;
+  }
+  .sites-clear:hover { color: var(--primary-2); }
+  #sites-tree {
+    flex: 1; overflow-y: auto; padding: 6px 0;
+  }
+  .site-host {
+    padding: 6px 12px; cursor: pointer;
+    font-size: 13px; font-weight: 500;
+    display: flex; align-items: center; gap: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .site-host.active { color: var(--primary-2); }
+  .site-host .triangle {
+    transition: transform 120ms; color: var(--muted);
+    width: 10px; display: inline-block;
+  }
+  .site-host.expanded .triangle { transform: rotate(90deg); }
+  .site-host:hover { background: rgba(151, 71, 255, 0.04); }
+  .site-paths { display: none; }
+  .site-host.expanded + .site-paths { display: block; }
+  .site-path {
+    padding: 4px 10px 4px 30px; cursor: pointer;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-left: 2px solid transparent;
+  }
+  .site-path:hover { background: rgba(151, 71, 255, 0.04); color: var(--text); }
+  .site-path.active { background: rgba(151, 71, 255, 0.10); color: var(--primary-2); border-left-color: var(--primary); }
+
+  /* Output/Log panel (Phase J) */
+  .output-log {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; max-height: 70vh;
+    overflow-y: auto; font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .log-row { display: grid; grid-template-columns: 90px 60px 1fr; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .log-row:last-child { border-bottom: none; }
+  .log-time  { color: var(--muted); }
+  .log-level { font-weight: 700; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
+  .log-level.info  { color: var(--accent); }
+  .log-level.phase { color: var(--primary-2); }
+  .log-level.warn  { color: var(--sev-medium); }
+  .log-level.error { color: var(--sev-high); }
+  .log-msg { color: var(--text); word-break: break-word; }
+
+  /* Replay modal (Phase L) */
+  .replay-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .replay-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; width: 720px; max-width: 92vw;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .replay-head {
+    display: flex; align-items: center;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 15px;
+  }
+  .replay-head span { flex: 1; }
+  .replay-head button {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 22px; line-height: 1;
+  }
+  .replay-body { padding: 18px; }
+  .replay-section { margin-bottom: 16px; }
+  .replay-section label {
+    display: block; color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .replay-section input, .replay-section select, .replay-section textarea {
+    width: 100%; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12px;
+    outline: none;
+  }
+  .replay-section input:focus, .replay-section textarea:focus,
+  .replay-section select:focus { border-color: var(--primary); }
+  .replay-section input { margin-bottom: 8px; }
+  .replay-section select { width: 100px; margin-right: 8px; vertical-align: top; }
+  .replay-section input#replay-url { width: calc(100% - 110px); }
+  .replay-actions { display: flex; align-items: center; }
+  button.primary {
+    background: var(--primary); color: white;
+    border: 1px solid var(--primary);
+    padding: 8px 18px; cursor: pointer; font-size: 13px;
+    font-weight: 600; border-radius: 6px;
+  }
+  button.primary:hover { background: var(--primary-2); }
+  #replay-result {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin: 0;
+    font-size: 11px; max-height: 320px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
+
+  .replay-link {
+    color: var(--primary-2); cursor: pointer; font-size: 11px;
+    margin-left: 8px; user-select: none;
+  }
+  .replay-link:hover { text-decoration: underline; }
+
+  /* Chart panel (Phase P) */
+  .chart-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .legend-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 4px; vertical-align: middle;
+  }
+
+  /* Per-rule progress bar (Phase O) */
+  .progress-bar {
+    display: inline-block; width: 100px; height: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; overflow: hidden; vertical-align: middle;
+    margin-right: 8px;
+  }
+  .progress-bar > span {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--primary-2));
+  }
+  .rule-status.ok { color: #22c55e; }
+  .rule-status.skipped { color: var(--muted); }
+  .rule-status.error { color: var(--sev-high); }
+
+  /* ── Severity tile row ─────────────────────────────────────────────────── */
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 4px;
+    position: relative; overflow: hidden;
+    cursor: pointer;
+  }
+  .tile::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--accent);
+  }
+  .tile.critical::before { background: var(--sev-critical); }
+  .tile.high::before     { background: var(--sev-high); }
+  .tile.medium::before   { background: var(--sev-medium); }
+  .tile.low::before      { background: var(--sev-low); }
+  .tile.info::before     { background: var(--sev-info); }
+  .tile .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .tile .count { font-size: 24px; font-weight: 700; }
+
+  /* ── Tab strip ─────────────────────────────────────────────────────────── */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 10px 18px; cursor: pointer; color: var(--muted);
+    font-size: 14px; font-weight: 500;
+    transition: all 120ms;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--primary-2); border-bottom-color: var(--primary); }
+  .tab .badge {
+    display: inline-block; margin-left: 6px;
+    background: var(--surface-2); color: var(--muted);
+    border-radius: 99px; padding: 1px 7px;
+    font-size: 11px; font-weight: 600;
+  }
+  .tab.active .badge { background: var(--primary); color: white; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Sub-tab strip (used inside Spider panel) ─────────────────────── */
+  .subtabs {
+    display: flex; gap: 2px; margin-bottom: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px; width: fit-content;
+  }
+  .subtab {
+    background: transparent; border: none; border-radius: 6px;
+    padding: 6px 14px; cursor: pointer; color: var(--muted);
+    font-size: 13px; font-weight: 500;
+  }
+  .subtab:hover { color: var(--text); }
+  .subtab.active { background: var(--surface-2); color: var(--primary-2); }
+  .subtab .badge {
+    margin-left: 6px; background: var(--surface);
+    border-radius: 99px; padding: 1px 6px; font-size: 10px; font-weight: 600;
+  }
+  .subpanel { display: none; }
+  .subpanel.active { display: block; }
+
+  .tag-chip {
+    display: inline-block; padding: 1px 7px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; margin-right: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .tag-chip.Password { color: var(--sev-high);  border-color: var(--sev-high); }
+  .tag-chip.Form     { color: var(--accent);    border-color: var(--accent); }
+  .tag-chip.Script   { color: #facc15;          border-color: #facc15; }
+  .tag-chip.Upload   { color: var(--sev-medium); border-color: var(--sev-medium); }
+  .tag-chip.JSON     { color: #a78bfa;          border-color: #a78bfa; }
+  .tag-chip.Comment  { color: var(--muted); }
+  .tag-chip.MailTo   { color: var(--muted); }
+
+  /* ── Filter bar ────────────────────────────────────────────────────────── */
+  .filters {
+    display: flex; gap: 12px; align-items: center; margin-bottom: 14px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; flex-wrap: wrap;
+  }
+  .filters input, .filters select {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 13px; outline: none;
+  }
+  .filters input { flex: 1; min-width: 200px; }
+  .filters input:focus, .filters select:focus { border-color: var(--primary); }
+  .count-pill { color: var(--muted); font-size: 12px; }
+
+  /* ── Tables ────────────────────────────────────────────────────────────── */
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: var(--surface-2); color: var(--muted);
+    text-align: left; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  th:hover { color: var(--primary-2); }
+  td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top; font-size: 13px;
+  }
+  tr:hover td { background: rgba(151, 71, 255, 0.04); cursor: pointer; }
+
+  .url-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cwe-cell { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent); }
+
+  /* Severity pill */
+  .sev {
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; min-width: 64px; text-align: center;
+  }
+  .sev.critical { background: color-mix(in srgb, var(--sev-critical) 18%, transparent); color: var(--sev-critical); border: 1px solid color-mix(in srgb, var(--sev-critical) 40%, transparent); }
+  .sev.high     { background: color-mix(in srgb, var(--sev-high)     18%, transparent); color: var(--sev-high);     border: 1px solid color-mix(in srgb, var(--sev-high)     40%, transparent); }
+  .sev.medium   { background: color-mix(in srgb, var(--sev-medium)   18%, transparent); color: var(--sev-medium);   border: 1px solid color-mix(in srgb, var(--sev-medium)   40%, transparent); }
+  .sev.low      { background: color-mix(in srgb, var(--sev-low)      18%, transparent); color: var(--sev-low);      border: 1px solid color-mix(in srgb, var(--sev-low)      40%, transparent); }
+  .sev.info     { background: color-mix(in srgb, var(--sev-info)     18%, transparent); color: var(--sev-info);     border: 1px solid color-mix(in srgb, var(--sev-info)     40%, transparent); }
+
+  .scope {
+    display: inline-block; padding: 1px 8px; border-radius: 99px;
+    font-size: 10px; font-weight: 600;
+  }
+  .scope.in     { background: color-mix(in srgb, #16a34a 16%, transparent); color: #4ade80; }
+  .scope.out    { background: color-mix(in srgb, #f97316 16%, transparent); color: #fb923c; }
+
+  .method {
+    display: inline-block; min-width: 56px; text-align: center;
+    padding: 1px 8px; border-radius: 4px;
+    font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
+    background: var(--surface-2); border: 1px solid var(--border);
+  }
+  .method.POST   { color: #f59e0b; border-color: #f59e0b; }
+  .method.PUT    { color: #06b6d4; border-color: #06b6d4; }
+  .method.DELETE { color: #dc2626; border-color: #dc2626; }
+  .method.PATCH  { color: #8b5cf6; border-color: #8b5cf6; }
+
+  .status-cell { font-family: ui-monospace, monospace; font-size: 12px; }
+  .status-2xx { color: #22c55e; }
+  .status-3xx { color: #06b6d4; }
+  .status-4xx { color: #f97316; }
+  .status-5xx { color: #dc2626; }
+
+  /* ── Alerts tree (Phase F) ─────────────────────────────────────────────── */
+  .alert-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .alert-group-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; cursor: pointer;
+    background: var(--surface-2);
+  }
+  .alert-group-header:hover { background: rgba(151, 71, 255, 0.07); }
+  .alert-group .triangle {
+    display: inline-block; width: 10px; transition: transform 120ms;
+    color: var(--muted);
+  }
+  .alert-group.open .triangle { transform: rotate(90deg); }
+  .alert-group-title { font-weight: 500; flex: 1; }
+  .alert-count {
+    color: var(--muted); font-size: 12px;
+    background: var(--surface); border-radius: 99px; padding: 1px 8px;
+  }
+  .alert-instances { display: none; padding: 0; }
+  .alert-group.open .alert-instances { display: block; }
+  .alert-instance {
+    padding: 10px 14px 10px 32px;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .alert-instance:hover { background: rgba(151, 71, 255, 0.04); }
+  .alert-instance .url-cell { display: block; }
+  .alert-detail {
+    display: none;
+    padding: 16px 24px;
+    background: #0e0e18;
+    border-top: 1px solid var(--primary);
+  }
+  .alert-instance.expanded + .alert-detail { display: block; }
+  .alert-detail dl {
+    display: grid; grid-template-columns: 120px 1fr; gap: 8px 18px;
+    font-size: 13px; margin: 0;
+  }
+  .alert-detail dt { color: var(--muted); font-weight: 500; }
+  .alert-detail dd { margin: 0; word-break: break-word; }
+  .alert-detail pre {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; margin: 0;
+    font-size: 12px; overflow-x: auto;
+    white-space: pre-wrap; word-break: break-all;
+  }
+
+  .empty {
+    text-align: center; padding: 48px 16px; color: var(--muted);
+  }
+
+  footer {
+    text-align: center; padding: 24px; color: var(--muted); font-size: 12px;
+  }
+  footer a { color: var(--primary-2); }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/logo.svg" alt="Cybrium" class="brand-shield"/>
+  <img src="/wordmark.svg" alt="Cybrium" class="brand-word"/>
+  <span class="target" id="target-host">—</span>
+  <span class="meta" id="scan-meta"></span>
+  <div class="export-group">
+    <button onclick="window.location='/api/export.json'">JSON</button>
+    <button onclick="window.location='/api/export.csv'">CSV</button>
+    <button onclick="window.location='/api/export.markdown'">Markdown</button>
+    <button onclick="window.location='/api/export.html'">HTML</button>
+    <button onclick="window.location='/api/export.sarif'">SARIF</button>
+    <button onclick="window.location='/api/export.xml'">XML</button>
+  </div>
+</header>
+
+<main>
+
+  <div class="tiles" id="tiles"></div>
+
+  <!-- Layout: sites sidebar + tabs+panels (Phase K) -->
+  <div class="layout">
+    <aside class="sites-sidebar">
+      <div class="sites-header">
+        <span>Sites</span>
+        <button class="sites-clear" title="clear filter" onclick="clearSiteFilter()">×</button>
+      </div>
+      <div id="sites-tree"></div>
+    </aside>
+
+    <div class="layout-main">
+      <div class="tabs">
+        <button class="tab active"  data-panel="alerts">Alerts <span class="badge" id="b-alerts">0</span></button>
+        <button class="tab"          data-panel="spider">Spider <span class="badge" id="b-spider">0</span></button>
+        <button class="tab"          data-panel="active">Active Scan <span class="badge" id="b-active">0</span></button>
+        <button class="tab"          data-panel="history">History <span class="badge" id="b-history">0</span></button>
+        <button class="tab"          data-panel="chart">Chart</button>
+        <button class="tab"          data-panel="output">Output <span class="badge" id="b-output">0</span></button>
+      </div>
+
+  <!-- ─── Alerts panel (Phase F — tree grouped) ───────────────────────── -->
+  <div class="panel active" id="p-alerts">
+    <div class="filters">
+      <input id="alert-search" type="search" placeholder="Search title, URL, CWE, evidence…" autofocus>
+      <select id="alert-sev">
+        <option value="">All severities</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+        <option value="info">Info</option>
+      </select>
+      <span class="count-pill" id="alert-count"></span>
+    </div>
+    <div id="alert-groups"></div>
+  </div>
+
+  <!-- ─── Spider panel (Phase E + H — three sub-tabs) ──────────────────── -->
+  <div class="panel" id="p-spider">
+    <div class="subtabs">
+      <button class="subtab active" data-sub="urls">URLs <span class="badge" id="b-sub-urls">0</span></button>
+      <button class="subtab" data-sub="nodes">Added Nodes <span class="badge" id="b-sub-nodes">0</span></button>
+      <button class="subtab" data-sub="messages">Messages <span class="badge" id="b-sub-msgs">0</span></button>
+    </div>
+
+    <!-- URLs sub-tab — every URL the spider observed (incl. out-of-scope) -->
+    <div class="subpanel active" id="sp-urls">
+      <div class="filters">
+        <input id="spider-search" type="search" placeholder="Search URL…">
+        <select id="spider-scope">
+          <option value="">All scope</option>
+          <option value="in">In scope</option>
+          <option value="out">Out of scope</option>
+        </select>
+        <select id="spider-method">
+          <option value="">All methods</option>
+          <option value="GET">GET</option><option value="POST">POST</option>
+          <option value="PUT">PUT</option><option value="PATCH">PATCH</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+        <select id="spider-source">
+          <option value="">All sources</option>
+          <option value="target">Target</option>
+          <option value="robots">robots.txt</option>
+          <option value="sitemap">sitemap.xml</option>
+          <option value="link">Link</option>
+          <option value="form">Form</option>
+        </select>
+        <span class="count-pill" id="spider-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="processed">●</th>
+              <th data-sort="method">Method</th>
+              <th data-sort="url">URI</th>
+              <th data-sort="status_code">Code</th>
+              <th data-sort="seed_source">Source</th>
+              <th data-sort="in_scope">Flags</th>
+            </tr>
+          </thead>
+          <tbody id="spider-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Added Nodes sub-tab — only in-scope, processed, distinct (URL+method) -->
+    <div class="subpanel" id="sp-nodes">
+      <div class="filters">
+        <input id="nodes-search" type="search" placeholder="Search URL…">
+        <span class="count-pill" id="nodes-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>●</th>
+              <th>Method</th>
+              <th>URI</th>
+            </tr>
+          </thead>
+          <tbody id="nodes-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Messages sub-tab — every spider HTTP request with full transaction detail -->
+    <div class="subpanel" id="sp-messages">
+      <div class="filters">
+        <input id="msg-search" type="search" placeholder="Search URL or tag…">
+        <select id="msg-status">
+          <option value="">All statuses</option>
+          <option value="2">2xx</option><option value="3">3xx</option>
+          <option value="4">4xx</option><option value="5">5xx</option>
+        </select>
+        <select id="msg-tag">
+          <option value="">All tags</option>
+          <option value="Script">Script</option>
+          <option value="Form">Form</option>
+          <option value="Password">Password</option>
+          <option value="Comment">Comment</option>
+          <option value="JSON">JSON</option>
+          <option value="MailTo">MailTo</option>
+          <option value="Upload">Upload</option>
+        </select>
+        <span class="count-pill" id="msg-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>●</th>
+              <th>Req. Time</th>
+              <th>Method</th>
+              <th>URL</th>
+              <th>Code</th>
+              <th>Reason</th>
+              <th>RTT</th>
+              <th>Hdr Size</th>
+              <th>Body Size</th>
+              <th>Highest Alert</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody id="msg-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Output / Log panel (Phase J) ────────────────────────────────── -->
+  <div class="panel" id="p-output">
+    <div class="filters">
+      <input id="output-search" type="search" placeholder="Search log messages…">
+      <select id="output-level">
+        <option value="">All levels</option>
+        <option value="phase">Phase</option>
+        <option value="info">Info</option>
+        <option value="warn">Warn</option>
+        <option value="error">Error</option>
+      </select>
+      <span class="count-pill" id="output-count"></span>
+    </div>
+    <div class="output-log" id="output-rows"></div>
+  </div>
+
+  <!-- ─── Active Scan panel (Phase G — Sent Messages + Phase O — By Rule) -->
+  <div class="panel" id="p-active">
+    <div class="subtabs">
+      <button class="subtab active" data-asub="msgs">Sent Messages <span class="badge" id="b-asub-msgs">0</span></button>
+      <button class="subtab"         data-asub="byrule">By Rule <span class="badge" id="b-asub-rule">0</span></button>
+    </div>
+
+    <!-- Sub-tab: Sent Messages (existing Phase G content) -->
+    <div class="subpanel active" id="ap-msgs">
+    <div class="filters">
+      <input id="active-search" type="search" placeholder="Search URL or source…">
+      <select id="active-method">
+        <option value="">All methods</option>
+        <option value="GET">GET</option>
+        <option value="POST">POST</option>
+        <option value="PUT">PUT</option>
+        <option value="PATCH">PATCH</option>
+        <option value="DELETE">DELETE</option>
+      </select>
+      <select id="active-status">
+        <option value="">All statuses</option>
+        <option value="2">2xx</option>
+        <option value="3">3xx</option>
+        <option value="4">4xx</option>
+        <option value="5">5xx</option>
+      </select>
+      <span class="count-pill" id="active-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="id">ID</th>
+            <th data-sort="sent_at">Sent</th>
+            <th data-sort="method">Method</th>
+            <th data-sort="url">URL</th>
+            <th data-sort="status">Code</th>
+            <th data-sort="reason">Reason</th>
+            <th data-sort="rtt_ms">RTT</th>
+            <th data-sort="resp_size">Size</th>
+            <th data-sort="source">Source</th>
+          </tr>
+        </thead>
+        <tbody id="active-rows"></tbody>
+      </table>
+    </div>
+    </div><!-- /#ap-msgs -->
+
+    <!-- Sub-tab: By Rule — per-rule progress: requests, findings, elapsed -->
+    <div class="subpanel" id="ap-byrule">
+      <div class="filters">
+        <input id="rule-search" type="search" placeholder="Search rule id…">
+        <span class="count-pill" id="rule-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Strength</th>
+              <th>Requests</th>
+              <th>Findings</th>
+              <th>Elapsed</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="rule-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── History panel (proxy mode) — every captured req/resp ───────── -->
+  <div class="panel" id="p-history">
+    <div class="filters">
+      <input id="hist-search" type="search" placeholder="Search URL or kind…">
+      <select id="hist-method">
+        <option value="">All methods</option>
+        <option>GET</option><option>POST</option><option>PUT</option>
+        <option>PATCH</option><option>DELETE</option><option>CONNECT</option><option>HEAD</option>
+      </select>
+      <select id="hist-status">
+        <option value="">All statuses</option>
+        <option value="2">2xx</option><option value="3">3xx</option>
+        <option value="4">4xx</option><option value="5">5xx</option>
+      </select>
+      <select id="hist-kind">
+        <option value="">All kinds</option>
+        <option value="http">HTTP</option>
+        <option value="tunnel">HTTPS tunnel</option>
+      </select>
+      <span class="count-pill" id="hist-count"></span>
+      <button onclick="exportHistory()" title="Download as JSON">↓ JSON</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>At</th>
+            <th>Method</th>
+            <th>URL</th>
+            <th>Code</th>
+            <th>RTT</th>
+            <th>Req</th>
+            <th>Resp</th>
+            <th>Kind</th>
+          </tr>
+        </thead>
+        <tbody id="hist-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ─── Chart panel (Phase P) — Response Chart ─────────────────────── -->
+  <div class="panel" id="p-chart">
+    <div class="filters">
+      <span class="count-pill" id="chart-summary">—</span>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;color:var(--muted)">
+        <span class="legend-dot" style="background:var(--text)"></span> Total &nbsp;
+        <span class="legend-dot" style="background:#facc15"></span> 1xx &nbsp;
+        <span class="legend-dot" style="background:#22c55e"></span> 2xx &nbsp;
+        <span class="legend-dot" style="background:#06b6d4"></span> 3xx &nbsp;
+        <span class="legend-dot" style="background:#ef4444"></span> 4xx &nbsp;
+        <span class="legend-dot" style="background:#a78bfa"></span> 5xx
+      </span>
+    </div>
+    <div class="chart-wrap">
+      <svg id="response-chart" width="100%" height="360" preserveAspectRatio="none"></svg>
+    </div>
+  </div>
+
+    </div><!-- /.layout-main -->
+  </div><!-- /.layout -->
+
+</main>
+
+<!-- Manual Request Editor modal (Phase L) -->
+<div class="replay-overlay" id="replay-overlay" style="display:none">
+  <div class="replay-modal">
+    <div class="replay-head">
+      <span>Manual Request Editor</span>
+      <button onclick="closeReplay()">×</button>
+    </div>
+    <div class="replay-body">
+      <div class="replay-section">
+        <label>Method</label>
+        <select id="replay-method">
+          <option>GET</option><option>POST</option><option>PUT</option>
+          <option>PATCH</option><option>DELETE</option><option>HEAD</option>
+        </select>
+        <label>URL</label>
+        <input id="replay-url" type="text" placeholder="https://..."/>
+      </div>
+      <div class="replay-section">
+        <label>Headers (one per line, "Name: Value")</label>
+        <textarea id="replay-headers" rows="6" placeholder="User-Agent: cyweb-replay&#10;Cookie: session=abc"></textarea>
+      </div>
+      <div class="replay-section">
+        <label>Body (POST/PUT/PATCH)</label>
+        <textarea id="replay-body" rows="6" placeholder=""></textarea>
+      </div>
+      <div class="replay-actions">
+        <button class="primary" onclick="sendReplay()">Send Request</button>
+        <span id="replay-status" style="margin-left:12px;color:var(--muted)"></span>
+      </div>
+      <div class="replay-section" id="replay-result-wrap" style="display:none">
+        <label>Response</label>
+        <pre id="replay-result"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Cybrium AI · cyweb scanner · <a href="https://github.com/cybrium-ai/cyweb">github.com/cybrium-ai/cyweb</a>
+</footer>
+
+<script>
+  const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  let DATA = null;
+  let ACTIVE_TAB = 'alerts';
+  let SORT = { spider: { key: 'method', dir: 1 }, active: { key: 'id', dir: 1 } };
+  let EXPANDED_GROUPS = new Set();
+  let EXPANDED_INSTANCES = new Set();
+
+  function sevName(s) {
+    if (typeof s === 'string') return s.toLowerCase();
+    if (s && typeof s === 'object') return Object.keys(s)[0]?.toLowerCase() || 'info';
+    return 'info';
+  }
+  function escape(s) {
+    return String(s ?? '').replace(/[&<>"']/g, ch => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[ch]));
+  }
+
+  async function load() {
+    const res = await fetch('/api/result');
+    DATA = await res.json();
+    DATA.spider_nodes = DATA.spider_nodes || [];
+    DATA.http_events  = DATA.http_events  || [];
+
+    document.getElementById('target-host').textContent = DATA.target;
+    const dur = (DATA.duration_ms / 1000).toFixed(1);
+    document.getElementById('scan-meta').textContent =
+      `${DATA.findings.length} alerts · ${DATA.spider_nodes.length} spider nodes · ` +
+      `${DATA.http_events.length} active-scan req · ${dur}s`;
+
+    DATA.log_lines  = DATA.log_lines  || [];
+    DATA.rule_stats = DATA.rule_stats || [];
+
+    document.getElementById('b-alerts').textContent = DATA.findings.length;
+    document.getElementById('b-spider').textContent = DATA.spider_nodes.length;
+    document.getElementById('b-active').textContent = DATA.http_events.length;
+    document.getElementById('b-output').textContent = DATA.log_lines.length;
+    document.getElementById('b-asub-msgs').textContent = DATA.http_events.length;
+    document.getElementById('b-asub-rule').textContent = DATA.rule_stats.length;
+
+    // Spider sub-tab badges (Phase H)
+    document.getElementById('b-sub-urls').textContent  = DATA.spider_nodes.length;
+    const addedNodes = DATA.spider_nodes.filter(n => n.in_scope && n.processed);
+    document.getElementById('b-sub-nodes').textContent = addedNodes.length;
+    document.getElementById('b-sub-msgs').textContent  = addedNodes.length;
+
+    renderTiles();
+    renderSitesTree();
+    renderAlerts();
+    renderSpider();
+    renderNodes();
+    renderMessages();
+    renderActive();
+    renderRules();
+    renderChart();
+    renderOutput();
+    fetchHistory();
+  }
+
+  /* ── History (proxy mode) — polls /api/proxy_events when active ──── */
+  let HISTORY = [];
+  let HIST_TIMER = null;
+
+  async function fetchHistory() {
+    try {
+      const r = await fetch('/api/proxy_events');
+      HISTORY = await r.json();
+    } catch { HISTORY = []; }
+    document.getElementById('b-history').textContent = HISTORY.length;
+    renderHistory();
+  }
+
+  function startHistoryPoll() {
+    if (HIST_TIMER) return;
+    HIST_TIMER = setInterval(fetchHistory, 2000);
+  }
+  function stopHistoryPoll() {
+    if (HIST_TIMER) { clearInterval(HIST_TIMER); HIST_TIMER = null; }
+  }
+
+  function renderHistory() {
+    const q   = document.getElementById('hist-search').value.toLowerCase();
+    const m   = document.getElementById('hist-method').value;
+    const sf  = document.getElementById('hist-status').value;
+    const k   = document.getElementById('hist-kind').value;
+    const items = HISTORY.filter(e => {
+      if (m && e.method !== m) return false;
+      if (sf && Math.floor(e.status / 100) !== Number(sf)) return false;
+      if (k && e.kind !== k) return false;
+      if (q) {
+        const hay = `${e.url} ${e.kind} ${e.method}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).slice().reverse();   // newest first
+
+    document.getElementById('hist-count').textContent =
+      `${items.length} of ${HISTORY.length} events`;
+    const tbody = document.getElementById('hist-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">
+        No captured traffic. Run <code>cyweb proxy</code>, configure your browser's proxy
+        to <code>127.0.0.1:8989</code>, and browse the target — captured requests appear here.
+      </td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(e => {
+      const ts = e.at ? e.at.split('T')[1]?.split('.')[0] ?? e.at : '—';
+      const cls = e.status > 0 ? `status-${Math.floor(e.status/100)}xx` : '';
+      const kindBadge = e.kind === 'tunnel'
+        ? '<span class="tag-chip" style="color:var(--accent);border-color:var(--accent)">TLS tunnel</span>'
+        : '<span class="tag-chip">HTTP</span>';
+      return `
+        <tr>
+          <td><code>${e.id}</code></td>
+          <td><code style="color:var(--muted);font-size:11px">${escape(ts)}</code></td>
+          <td><span class="method ${escape(e.method)}">${escape(e.method)}</span></td>
+          <td class="url-cell" title="${escape(e.url)}">${escape(e.url)}</td>
+          <td class="status-cell ${cls}">${e.status > 0 ? e.status : '—'}</td>
+          <td><code>${e.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(e.req_size)}</code></td>
+          <td><code>${formatBytes(e.resp_size)}</code></td>
+          <td>${kindBadge}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function exportHistory() {
+    const blob = new Blob([JSON.stringify(HISTORY, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'cyweb-history.json';
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  /* ── Per-rule progress (Phase O) ──────────────────────────────────── */
+  function renderRules() {
+    const q = document.getElementById('rule-search').value.toLowerCase();
+    const items = (DATA.rule_stats || []).filter(r =>
+      !q || r.rule_id.toLowerCase().includes(q)
+    );
+    document.getElementById('rule-count').textContent =
+      `${items.length} of ${(DATA.rule_stats || []).length} rules`;
+    const tbody = document.getElementById('rule-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No rules ran — use <code>--fuzz</code> to enable the active scanner.</td></tr>`;
+      return;
+    }
+    const maxReq = Math.max(1, ...items.map(r => r.requests));
+    tbody.innerHTML = items.map(r => `
+      <tr>
+        <td><code>${escape(r.rule_id)}</code></td>
+        <td><span style="color:var(--muted);font-size:12px">${escape(r.strength)}</span></td>
+        <td>
+          <span class="progress-bar"><span style="width:${(r.requests/maxReq*100).toFixed(0)}%"></span></span>
+          <code>${r.requests}</code>
+        </td>
+        <td><strong style="color:${r.findings>0?'var(--sev-high)':'var(--muted)'}">${r.findings}</strong></td>
+        <td><code>${(r.elapsed_ms/1000).toFixed(2)}s</code></td>
+        <td><span class="rule-status ${escape(r.status)}">${escape(r.status)}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  /* ── Response Chart (Phase P) — SVG line chart ────────────────────── */
+  function renderChart() {
+    const evts = DATA.http_events || [];
+    const svg = document.getElementById('response-chart');
+    if (!svg) return;
+    if (evts.length === 0) {
+      svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="var(--muted)" font-size="13">No active-scan requests yet — run with --fuzz.</text>`;
+      document.getElementById('chart-summary').textContent = '0 requests';
+      return;
+    }
+    // Bin events by 1-second epoch second since first event.
+    const tsList = evts.map(e => Date.parse(e.sent_at)).filter(t => !isNaN(t));
+    const t0 = Math.min(...tsList), t1 = Math.max(...tsList);
+    const span = Math.max(1, Math.ceil((t1 - t0) / 1000));
+    const bins = Array.from({length: span+1}, () => ({total:0, c1:0, c2:0, c3:0, c4:0, c5:0}));
+    for (const e of evts) {
+      const t = Date.parse(e.sent_at);
+      if (isNaN(t)) continue;
+      const b = Math.floor((t - t0) / 1000);
+      if (b < 0 || b > span) continue;
+      bins[b].total++;
+      const cls = `c${Math.floor(e.status/100)}`;
+      if (bins[b][cls] !== undefined) bins[b][cls]++;
+    }
+    const maxY = Math.max(1, ...bins.map(b => b.total));
+    const W = svg.clientWidth || 800;
+    const H = 360;
+    const padL = 44, padR = 16, padT = 14, padB = 32;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    function x(i) { return padL + (i / Math.max(1, span)) * plotW; }
+    function y(v) { return padT + plotH - (v / maxY) * plotH; }
+
+    // Build polylines
+    function poly(key, color) {
+      const pts = bins.map((b, i) => `${x(i).toFixed(1)},${y(b[key]).toFixed(1)}`).join(' ');
+      return `<polyline fill="none" stroke="${color}" stroke-width="1.6" points="${pts}"/>`;
+    }
+    // Y-axis ticks (5 lines)
+    let ticks = '';
+    for (let k = 0; k <= 4; k++) {
+      const v = Math.round(maxY * (4-k) / 4);
+      const yy = padT + (k / 4) * plotH;
+      ticks += `<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+      ticks += `<text x="${padL-6}" y="${yy+3}" fill="var(--muted)" font-size="10" text-anchor="end">${v}</text>`;
+    }
+    // X-axis end labels
+    const xlbl = `<text x="${padL}" y="${H-12}" fill="var(--muted)" font-size="10">0s</text>` +
+                 `<text x="${W-padR}" y="${H-12}" fill="var(--muted)" font-size="10" text-anchor="end">${span}s</text>`;
+
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = ticks + xlbl
+      + poly('total', 'var(--text)')
+      + poly('c1',    '#facc15')
+      + poly('c2',    '#22c55e')
+      + poly('c3',    '#06b6d4')
+      + poly('c4',    '#ef4444')
+      + poly('c5',    '#a78bfa');
+
+    document.getElementById('chart-summary').textContent =
+      `${evts.length} requests · peak ${maxY}/s · ${span}s span`;
+  }
+
+  /* ── Sites tree sidebar (Phase K) ─────────────────────────────────── */
+  let SITE_FILTER = { host: null, path: null };
+  let EXPANDED_HOSTS = new Set();
+
+  function renderSitesTree() {
+    // Build host → set of paths from spider_nodes
+    const tree = new Map();
+    for (const n of DATA.spider_nodes) {
+      try {
+        const u = new URL(n.url);
+        const host = u.host;
+        const pathKey = `${n.method} ${u.pathname || '/'}`;
+        if (!tree.has(host)) tree.set(host, new Set());
+        tree.get(host).add(pathKey);
+      } catch (_) {}
+    }
+    const wrap = document.getElementById('sites-tree');
+    if (tree.size === 0) {
+      wrap.innerHTML = `<div style="padding:14px;color:var(--muted);font-size:12px">No sites yet — run cyweb with <code>--spider</code>.</div>`;
+      return;
+    }
+    const hosts = [...tree.keys()].sort();
+    wrap.innerHTML = hosts.map(host => {
+      const open = EXPANDED_HOSTS.has(host);
+      const isActiveHost = SITE_FILTER.host === host;
+      const paths = [...tree.get(host)].sort();
+      return `
+        <div class="site-host ${open?'expanded':''} ${isActiveHost?'active':''}" data-host="${escape(host)}">
+          <span class="triangle">▶</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(host)}</span>
+          <span style="color:var(--muted);font-size:10px">${paths.length}</span>
+        </div>
+        <div class="site-paths">
+          ${paths.map(p => {
+            const active = SITE_FILTER.host === host && SITE_FILTER.path === p;
+            return `<div class="site-path ${active?'active':''}" data-host="${escape(host)}" data-path="${escape(p)}" title="${escape(p)}">${escape(p)}</div>`;
+          }).join('')}
+        </div>
+      `;
+    }).join('');
+
+    wrap.querySelectorAll('.site-host').forEach(el => {
+      el.onclick = () => {
+        const host = el.dataset.host;
+        if (EXPANDED_HOSTS.has(host)) EXPANDED_HOSTS.delete(host); else EXPANDED_HOSTS.add(host);
+        SITE_FILTER = { host, path: null };
+        renderSitesTree();
+        applyFilters();
+      };
+    });
+    wrap.querySelectorAll('.site-path').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        SITE_FILTER = { host: el.dataset.host, path: el.dataset.path };
+        renderSitesTree();
+        applyFilters();
+      };
+    });
+  }
+
+  function clearSiteFilter() {
+    SITE_FILTER = { host: null, path: null };
+    renderSitesTree();
+    applyFilters();
+  }
+
+  function matchesSite(url, method) {
+    if (!SITE_FILTER.host) return true;
+    try {
+      const u = new URL(url);
+      if (u.host !== SITE_FILTER.host) return false;
+      if (SITE_FILTER.path) {
+        const pk = `${method || 'GET'} ${u.pathname || '/'}`;
+        if (pk !== SITE_FILTER.path) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  function applyFilters() {
+    renderAlerts();
+    renderSpider();
+    renderNodes();
+    renderMessages();
+    renderActive();
+  }
+
+  /* ── Output / Log (Phase J) ─────────────────────────────────────────── */
+  function renderOutput() {
+    const q = document.getElementById('output-search').value.toLowerCase();
+    const lvl = document.getElementById('output-level').value;
+    const items = (DATA.log_lines || []).filter(l => {
+      if (lvl && l.level !== lvl) return false;
+      if (q && !(l.message || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+    document.getElementById('output-count').textContent =
+      `${items.length} of ${(DATA.log_lines || []).length} log entries`;
+    const wrap = document.getElementById('output-rows');
+    if (items.length === 0) {
+      wrap.innerHTML = `<div class="empty">No log entries match.</div>`;
+      return;
+    }
+    wrap.innerHTML = items.map(l => {
+      const t = (l.at || '').split('T')[1]?.split('.')[0] ?? '—';
+      return `
+        <div class="log-row">
+          <span class="log-time">${escape(t)}</span>
+          <span class="log-level ${escape(l.level)}">${escape(l.level)}</span>
+          <span class="log-msg">${escape(l.message || '')}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /* ── Manual Request Editor (Phase L) ──────────────────────────────── */
+  function openReplay(opts) {
+    document.getElementById('replay-method').value = opts.method || 'GET';
+    document.getElementById('replay-url').value    = opts.url    || '';
+    document.getElementById('replay-headers').value =
+      'User-Agent: cyweb-replay/0.8\nAccept: */*';
+    document.getElementById('replay-body').value   = '';
+    document.getElementById('replay-status').textContent = '';
+    document.getElementById('replay-result-wrap').style.display = 'none';
+    document.getElementById('replay-overlay').style.display = 'flex';
+  }
+  function closeReplay() {
+    document.getElementById('replay-overlay').style.display = 'none';
+  }
+  async function sendReplay() {
+    const method = document.getElementById('replay-method').value;
+    const url    = document.getElementById('replay-url').value;
+    const headersText = document.getElementById('replay-headers').value;
+    const body   = document.getElementById('replay-body').value;
+    const headers = {};
+    headersText.split('\n').forEach(line => {
+      const i = line.indexOf(':');
+      if (i > 0) headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    });
+    document.getElementById('replay-status').textContent = 'Sending...';
+    document.getElementById('replay-result-wrap').style.display = 'none';
+    try {
+      const resp = await fetch('/api/replay', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ method, url, headers, body })
+      });
+      const data = await resp.json();
+      const hdrText = data.headers.map(([k,v]) => `${k}: ${v}`).join('\n');
+      const out = `HTTP ${data.status} ${data.reason} · ${data.rtt_ms}ms\n\n${hdrText}\n\n${data.body.slice(0, 8000)}${data.body.length > 8000 ? '\n\n... (truncated)' : ''}`;
+      document.getElementById('replay-result').textContent = out;
+      document.getElementById('replay-result-wrap').style.display = 'block';
+      document.getElementById('replay-status').textContent =
+        `${data.status} ${data.reason} · ${data.rtt_ms}ms`;
+    } catch (e) {
+      document.getElementById('replay-status').textContent = 'Error: ' + e.message;
+    }
+  }
+  // Close on overlay click (but not modal click)
+  document.getElementById('replay-overlay').onclick = (e) => {
+    if (e.target.id === 'replay-overlay') closeReplay();
+  };
+
+  function renderTiles() {
+    const s = DATA.summary;
+    const html = ['critical','high','medium','low','info'].map(k => `
+      <div class="tile ${k}" data-sev="${k}">
+        <span class="label">${k}</span>
+        <span class="count">${s[k]}</span>
+      </div>
+    `).join('');
+    document.getElementById('tiles').innerHTML = html;
+    document.querySelectorAll('.tile').forEach(el => {
+      el.onclick = () => {
+        switchTab('alerts');
+        document.getElementById('alert-sev').value = el.dataset.sev;
+        renderAlerts();
+      };
+    });
+  }
+
+  /* ── Alerts (Phase F — tree-grouped) ────────────────────────────────── */
+  function filteredAlerts() {
+    const q = document.getElementById('alert-search').value.toLowerCase();
+    const sev = document.getElementById('alert-sev').value;
+    return DATA.findings.filter(f => {
+      const fsev = sevName(f.severity);
+      if (sev && fsev !== sev) return false;
+      if (!matchesSite(f.url, f.http_method || 'GET')) return false;
+      if (q) {
+        const hay = `${f.title} ${f.url} ${f.cwe ?? ''} ${f.evidence ?? ''} ${f.description}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderAlerts() {
+    const items = filteredAlerts();
+    document.getElementById('alert-count').textContent =
+      `${items.length} of ${DATA.findings.length} alerts`;
+
+    // Group by title
+    const groups = new Map();
+    for (const f of items) {
+      if (!groups.has(f.title)) groups.set(f.title, []);
+      groups.get(f.title).push(f);
+    }
+    // Sort groups by max severity then title
+    const ordered = [...groups.entries()].sort((a, b) => {
+      const av = Math.min(...a[1].map(f => SEV_ORDER[sevName(f.severity)] ?? 9));
+      const bv = Math.min(...b[1].map(f => SEV_ORDER[sevName(f.severity)] ?? 9));
+      if (av !== bv) return av - bv;
+      return a[0].localeCompare(b[0]);
+    });
+
+    const wrap = document.getElementById('alert-groups');
+    if (ordered.length === 0) {
+      wrap.innerHTML = `<div class="empty">No alerts match the current filters.</div>`;
+      return;
+    }
+    wrap.innerHTML = ordered.map(([title, instances]) => {
+      const sev = sevName(instances[0].severity);
+      const isOpen = EXPANDED_GROUPS.has(title);
+      const cnt = instances.length;
+      return `
+        <div class="alert-group ${isOpen ? 'open' : ''}" data-group="${escape(title)}">
+          <div class="alert-group-header">
+            <span class="triangle">▶</span>
+            <span class="sev ${sev}">${sev}</span>
+            <span class="alert-group-title">${escape(title)}</span>
+            <span class="alert-count">${cnt}</span>
+          </div>
+          <div class="alert-instances">
+            ${instances.map((f, i) => {
+              const ikey = title + '|' + i;
+              const expanded = EXPANDED_INSTANCES.has(ikey);
+              return `
+                <div class="alert-instance ${expanded ? 'expanded' : ''}" data-ikey="${escape(ikey)}">
+                  <span class="method ${escape(f.http_method || 'GET')}">${escape(f.http_method || 'GET')}</span>
+                  <span class="url-cell" title="${escape(f.url)}">${escape(f.url)}</span>
+                </div>
+                <div class="alert-detail" data-detail="${escape(ikey)}" style="${expanded ? '' : 'display:none'}">
+                  <dl>
+                    <dt>URL</dt><dd><code>${escape(f.url)}</code></dd>
+                    ${f.cwe ? `<dt>CWE</dt><dd><code>${escape(f.cwe)}</code></dd>` : ''}
+                    <dt>Category</dt><dd>${escape(f.category)}</dd>
+                    ${f.confidence != null ? `<dt>Confidence</dt><dd>${escape(f.confidence)}</dd>` : ''}
+                    <dt>Description</dt><dd>${escape(f.description)}</dd>
+                    ${f.evidence ? `<dt>Evidence</dt><dd><pre>${escape(f.evidence)}</pre></dd>` : ''}
+                    ${f.remediation ? `<dt>Solution</dt><dd>${escape(f.remediation)}</dd>` : ''}
+                    <dt>Rule ID</dt><dd><code>${escape(f.id)}</code></dd>
+                    ${f.vuln_class ? `<dt>Vuln class</dt><dd><code>${escape(f.vuln_class)}</code></dd>` : ''}
+                  </dl>
+                  <div style="margin-top:12px">
+                    <button onclick="event.stopPropagation(); openReplay({method:'${escape(f.http_method||'GET')}', url:'${escape(f.url).replace(/'/g, '&#39;')}'})">▶ Open in Manual Request Editor</button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Wire group toggle
+    wrap.querySelectorAll('.alert-group-header').forEach(el => {
+      el.onclick = () => {
+        const g = el.parentElement.dataset.group;
+        if (EXPANDED_GROUPS.has(g)) EXPANDED_GROUPS.delete(g);
+        else EXPANDED_GROUPS.add(g);
+        renderAlerts();
+      };
+    });
+    // Wire instance toggle
+    wrap.querySelectorAll('.alert-instance').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const k = el.dataset.ikey;
+        if (EXPANDED_INSTANCES.has(k)) EXPANDED_INSTANCES.delete(k);
+        else EXPANDED_INSTANCES.add(k);
+        renderAlerts();
+      };
+    });
+  }
+
+  /* ── Spider (Phase E) ───────────────────────────────────────────────── */
+  function renderSpider() {
+    const q   = document.getElementById('spider-search').value.toLowerCase();
+    const sc  = document.getElementById('spider-scope').value;
+    const m   = document.getElementById('spider-method').value;
+    const src = document.getElementById('spider-source').value;
+    let nodes = DATA.spider_nodes.filter(n => {
+      if (sc === 'in'  && !n.in_scope) return false;
+      if (sc === 'out' &&  n.in_scope) return false;
+      if (m && n.method !== m)         return false;
+      if (src && n.seed_source !== src) return false;
+      if (q && !n.url.toLowerCase().includes(q)) return false;
+      if (!matchesSite(n.url, n.method)) return false;
+      return true;
+    });
+    // Sort
+    const { key, dir } = SORT.spider;
+    nodes = nodes.slice().sort((a, b) => {
+      const av = a[key] ?? '', bv = b[key] ?? '';
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+    document.getElementById('spider-count').textContent =
+      `${nodes.length} of ${DATA.spider_nodes.length} nodes`;
+    const tbody = document.getElementById('spider-rows');
+    if (nodes.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">No spider nodes match.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = nodes.map(n => {
+      const dot = n.processed ? '🟢' : (n.in_scope ? '⚪' : '🔴');
+      const status = n.status_code ? `<span class="status-cell status-${Math.floor(n.status_code/100)}xx">${n.status_code}</span>` : '<span class="status-cell" style="color:var(--muted)">—</span>';
+      const flag = n.in_scope ? '<span class="scope in">In scope</span>' : '<span class="scope out">Out of scope</span>';
+      return `
+        <tr>
+          <td>${dot}</td>
+          <td><span class="method ${escape(n.method)}">${escape(n.method)}</span></td>
+          <td class="url-cell" title="${escape(n.url)}">${escape(n.url)}</td>
+          <td>${status}</td>
+          <td><span style="color:var(--muted);font-size:12px">${escape(n.seed_source)}</span></td>
+          <td>${flag}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  /* ── Spider sub-tabs (Phase H) ────────────────────────────────────── */
+  function renderNodes() {
+    const q = document.getElementById('nodes-search').value.toLowerCase();
+    const items = DATA.spider_nodes
+      .filter(n => n.in_scope && n.processed)
+      .filter(n => !q || n.url.toLowerCase().includes(q));
+    document.getElementById('nodes-count').textContent =
+      `${items.length} added nodes`;
+    const tbody = document.getElementById('nodes-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="3" class="empty">No nodes — run the spider with <code>--spider</code>.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(n => `
+      <tr>
+        <td>🟢</td>
+        <td><span class="method ${escape(n.method)}">${escape(n.method)}</span></td>
+        <td class="url-cell" title="${escape(n.url)}">${escape(n.url)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function renderMessages() {
+    const q       = document.getElementById('msg-search').value.toLowerCase();
+    const sFilter = document.getElementById('msg-status').value;
+    const tFilter = document.getElementById('msg-tag').value;
+    const items = DATA.spider_nodes
+      .filter(n => n.processed && (n.status_code != null))
+      .filter(n => !sFilter || (n.status_code && Math.floor(n.status_code/100) === Number(sFilter)))
+      .filter(n => !tFilter || (n.tags || []).includes(tFilter))
+      .filter(n => {
+        if (!q) return true;
+        const hay = (n.url + ' ' + (n.tags || []).join(' ')).toLowerCase();
+        return hay.includes(q);
+      });
+    document.getElementById('msg-count').textContent =
+      `${items.length} of ${DATA.spider_nodes.filter(n=>n.processed).length} messages`;
+    const tbody = document.getElementById('msg-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="11" class="empty">No spider messages — run with <code>--spider</code>.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(n => {
+      const ts = n.req_timestamp ? n.req_timestamp.split('T')[1]?.split('.')[0] : '—';
+      const code = n.status_code != null
+        ? `<span class="status-cell status-${Math.floor(n.status_code/100)}xx">${n.status_code}</span>`
+        : '—';
+      const alert = n.highest_alert
+        ? `<span class="sev ${escape(n.highest_alert)}">${escape(n.highest_alert)}</span>`
+        : '<span style="color:var(--muted)">—</span>';
+      const tags = (n.tags || []).map(t => `<span class="tag-chip ${escape(t)}">${escape(t)}</span>`).join('');
+      return `
+        <tr>
+          <td>🟢</td>
+          <td><code style="color:var(--muted);font-size:11px">${escape(ts)}</code></td>
+          <td><span class="method ${escape(n.method)}">${escape(n.method)}</span></td>
+          <td class="url-cell" title="${escape(n.url)}">${escape(n.url)}</td>
+          <td>${code}</td>
+          <td style="color:var(--muted);font-size:12px">${escape(n.reason || '')}</td>
+          <td><code>${n.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(n.resp_header_size)}</code></td>
+          <td><code>${formatBytes(n.resp_body_size)}</code></td>
+          <td>${alert}</td>
+          <td>${tags || '<span style="color:var(--muted)">—</span>'}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  /* ── Active Scan (Phase G — Sent Messages) ──────────────────────────── */
+  function renderActive() {
+    const q = document.getElementById('active-search').value.toLowerCase();
+    const m = document.getElementById('active-method').value;
+    const sFilter = document.getElementById('active-status').value;
+    let evts = DATA.http_events.filter(e => {
+      if (m && e.method !== m) return false;
+      if (sFilter && Math.floor(e.status / 100) !== Number(sFilter)) return false;
+      if (!matchesSite(e.url, e.method)) return false;
+      if (q) {
+        const hay = `${e.url} ${e.source}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const { key, dir } = SORT.active;
+    evts = evts.slice().sort((a, b) => {
+      const av = a[key] ?? '', bv = b[key] ?? '';
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+    document.getElementById('active-count').textContent =
+      `${evts.length} of ${DATA.http_events.length} requests`;
+    const tbody = document.getElementById('active-rows');
+    if (evts.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">No active-scan requests recorded. Run cyweb with --fuzz to populate.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = evts.map(e => {
+      const ts = e.sent_at.split('T')[1]?.split('.')[0] ?? e.sent_at;
+      const cls = `status-${Math.floor(e.status/100)}xx`;
+      return `
+        <tr>
+          <td><code>${e.id}</code></td>
+          <td><code style="color:var(--muted)">${escape(ts)}</code></td>
+          <td><span class="method ${escape(e.method)}">${escape(e.method)}</span></td>
+          <td class="url-cell" title="${escape(e.url)}">${escape(e.url)}</td>
+          <td class="status-cell ${cls}">${e.status}</td>
+          <td style="color:var(--muted);font-size:12px">${escape(e.reason)}</td>
+          <td><code>${e.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(e.resp_size)}</code></td>
+          <td><code style="color:var(--accent);font-size:11px">${escape(e.source)}</code></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + 'B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'K';
+    return (n / 1024 / 1024).toFixed(1) + 'M';
+  }
+
+  /* ── Tab switching ──────────────────────────────────────────────────── */
+  function switchTab(panel) {
+    ACTIVE_TAB = panel;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + panel));
+    // Re-render the chart when its panel becomes visible — SVG width
+    // reads as 0 while display:none, so the first render is wrong
+    // until we re-paint.
+    if (panel === 'chart') renderChart();
+    // History tab polls proxy_events while it's the active tab so
+    // captured traffic streams in live.
+    if (panel === 'history') {
+      fetchHistory();
+      startHistoryPoll();
+    } else {
+      stopHistoryPoll();
+    }
+  }
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.panel));
+
+  /* Spider sub-tab switching (Phase H) */
+  document.querySelectorAll('.subtab[data-sub]').forEach(t => {
+    t.onclick = () => {
+      const sub = t.dataset.sub;
+      document.querySelectorAll('.subtab[data-sub]').forEach(x => x.classList.toggle('active', x.dataset.sub === sub));
+      document.querySelectorAll('#p-spider .subpanel').forEach(p => p.classList.toggle('active', p.id === 'sp-' + sub));
+    };
+  });
+  /* Active Scan sub-tab switching (Phase O) */
+  document.querySelectorAll('.subtab[data-asub]').forEach(t => {
+    t.onclick = () => {
+      const sub = t.dataset.asub;
+      document.querySelectorAll('.subtab[data-asub]').forEach(x => x.classList.toggle('active', x.dataset.asub === sub));
+      document.querySelectorAll('#p-active .subpanel').forEach(p => p.classList.toggle('active', p.id === 'ap-' + sub));
+    };
+  });
+  document.getElementById('rule-search').addEventListener('input', renderRules);
+  ['hist-search','hist-method','hist-status','hist-kind'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input',  renderHistory);
+    el.addEventListener('change', renderHistory);
+  });
+  ['nodes-search'].forEach(id => document.getElementById(id).addEventListener('input', renderNodes));
+  ['msg-search','msg-status','msg-tag'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderMessages);
+    el.addEventListener('change', renderMessages);
+  });
+
+  /* ── Filter bindings ────────────────────────────────────────────────── */
+  ['alert-search','alert-sev'].forEach(id => document.getElementById(id).addEventListener('input', renderAlerts));
+  document.getElementById('alert-sev').addEventListener('change', renderAlerts);
+  ['spider-search','spider-scope','spider-method','spider-source'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderSpider);
+    el.addEventListener('change', renderSpider);
+  });
+  ['active-search','active-method','active-status'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderActive);
+    el.addEventListener('change', renderActive);
+  });
+  ['output-search','output-level'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderOutput);
+    el.addEventListener('change', renderOutput);
+  });
+
+  /* ── Sort headers ───────────────────────────────────────────────────── */
+  document.querySelectorAll('#p-spider th[data-sort]').forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      if (SORT.spider.key === k) SORT.spider.dir = -SORT.spider.dir;
+      else { SORT.spider.key = k; SORT.spider.dir = 1; }
+      renderSpider();
+    };
+  });
+  document.querySelectorAll('#p-active th[data-sort]').forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.sort;
+      if (SORT.active.key === k) SORT.active.dir = -SORT.active.dir;
+      else { SORT.active.key = k; SORT.active.dir = 1; }
+      renderActive();
+    };
+  });
+
+  load();
+</script>
+</body>
+</html>

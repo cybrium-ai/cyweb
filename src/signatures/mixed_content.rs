@@ -5,9 +5,10 @@
 //! over both schemes — an attacker on the network path can MITM the
 //! HTTP version and downgrade-attack the user.
 //!
-//! Maps to ZAP rules 10039/10040/10041/10042 (Mixed Content / HTTPS
-//! Content Available via HTTP / Insecure Authentication / Form-Action
-//! Insecure URL).
+//! Covers the mixed-content class: HTTPS Content Available via HTTP,
+//! Insecure Form Action URL, Insecure Authentication transport, plain
+//! HTTP-to-HTTP redirects (no upgrade). CWE-319 (Cleartext Transmission
+//! of Sensitive Information).
 
 use super::{Finding, Severity};
 use reqwest::{Client, StatusCode};

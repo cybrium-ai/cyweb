@@ -292,17 +292,31 @@ fn parse_severity(s: &str) -> Severity {
 struct InjectionPoint {
     url: String,
     param: String,
+    /// HTTP method for the request that carries this parameter. "GET"
+    /// means the param goes in the query string; "POST" / "PUT" /
+    /// "PATCH" means it goes in a `application/x-www-form-urlencoded`
+    /// body. v0.7.x always assumed GET — Phase C of the v0.8 sprint
+    /// adds form-aware discovery.
+    method: String,
+    /// All other parameter names declared on the same form. When we
+    /// fuzz one parameter, the others get filled with benign values
+    /// so the form actually validates and we exercise the real
+    /// state-changing handler instead of a "missing field" branch.
+    sibling_params: Vec<String>,
 }
 
 fn discover_injection_points(target: &str, crawled_urls: &[String]) -> Vec<InjectionPoint> {
     let mut points: HashSet<InjectionPoint> = HashSet::new();
 
+    // (1) URL query-string parameters from every crawled URL.
     for url_str in crawled_urls {
         if let Ok(parsed) = url::Url::parse(url_str) {
             for (key, _val) in parsed.query_pairs() {
                 points.insert(InjectionPoint {
                     url: url_str.clone(),
                     param: key.to_string(),
+                    method: "GET".into(),
+                    sibling_params: Vec::new(),
                 });
             }
         }
@@ -317,7 +331,91 @@ fn discover_injection_points(target: &str, crawled_urls: &[String]) -> Vec<Injec
             points.insert(InjectionPoint {
                 url: target.to_string(),
                 param: param.to_string(),
+                method: "GET".into(),
+                sibling_params: Vec::new(),
             });
+        }
+    }
+
+    points.into_iter().collect()
+}
+
+/// Fetch every crawled HTML page, parse `<form>` tags, and emit one
+/// InjectionPoint per (form action × form param) tuple — same shape
+/// for spider-fed active scanning. Skips upload forms
+/// (`enctype=multipart/form-data`) since cyweb's payload format is
+/// urlencoded.
+async fn discover_form_points(client: &Client, crawled_urls: &[String]) -> Vec<InjectionPoint> {
+    use scraper::{Html, Selector};
+
+    let mut points: HashSet<InjectionPoint> = HashSet::new();
+    let form_sel  = Selector::parse("form").expect("static selector");
+    let input_sel = Selector::parse("input,select,textarea").expect("static selector");
+
+    for url_str in crawled_urls.iter().take(200) {
+        let resp = match client.get(url_str).send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        if !ctype.contains("html") {
+            continue;
+        }
+        let body = match resp.text().await {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let base = match url::Url::parse(url_str) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let doc = Html::parse_document(&body);
+
+        for form in doc.select(&form_sel) {
+            let method = form
+                .value()
+                .attr("method")
+                .unwrap_or("GET")
+                .to_ascii_uppercase();
+            let enctype = form
+                .value()
+                .attr("enctype")
+                .unwrap_or("application/x-www-form-urlencoded");
+            if enctype.contains("multipart") {
+                continue; // file-upload forms — not the right shape for fuzzing
+            }
+            let action = form.value().attr("action").unwrap_or("");
+            let action_url = if action.is_empty() {
+                url_str.clone()
+            } else {
+                match base.join(action) {
+                    Ok(u) => u.to_string(),
+                    Err(_) => continue,
+                }
+            };
+
+            // Collect all named inputs first so each fuzz target
+            // knows about its siblings.
+            let names: Vec<String> = form
+                .select(&input_sel)
+                .filter_map(|el| el.value().attr("name").map(String::from))
+                .filter(|n| !n.is_empty())
+                .collect();
+            for n in &names {
+                let siblings: Vec<String> =
+                    names.iter().filter(|x| x.as_str() != n).cloned().collect();
+                points.insert(InjectionPoint {
+                    url: action_url.clone(),
+                    param: n.clone(),
+                    method: method.clone(),
+                    sibling_params: siblings,
+                });
+            }
         }
     }
 
@@ -333,7 +431,7 @@ pub async fn run_fuzz(
     crawled_urls: &[String],
     baseline_hash: u64,
     custom_payloads_dir: Option<&str>,
-) -> Vec<Finding> {
+) -> (Vec<Finding>, Vec<crate::scanner::HttpEvent>) {
     let fuzz_ctx = FuzzContext::from_scan(server_info, crawled_urls);
 
     // Load payloads
@@ -385,11 +483,23 @@ pub async fn run_fuzz(
         eprintln!("  Technologies: {}", fuzz_ctx.technologies.join(", ").dimmed());
     }
 
-    let injection_points = discover_injection_points(target, crawled_urls);
+    // Combine query-string injection points (legacy, sync) with
+    // form-derived ones (Phase C, async — fetches each crawled page
+    // and walks <form> tags). Forms widen the active-scan surface
+    // dramatically on real apps where most state-changing endpoints
+    // live behind POST forms.
+    let mut injection_points = discover_injection_points(target, crawled_urls);
+    let form_points = discover_form_points(client, crawled_urls).await;
+    if !form_points.is_empty() {
+        eprintln!("  {} form-derived injection points (POST/PUT/PATCH)", form_points.len());
+    }
+    injection_points.extend(form_points);
     let total_tests = injection_points.len() * total_payloads;
     eprintln!("  {} injection points x {} payloads = {} tests", injection_points.len(), total_payloads, total_tests);
 
     let mut findings: Vec<Finding> = Vec::new();
+    let mut http_events: Vec<crate::scanner::HttpEvent> = Vec::new();
+    let mut event_id: u32 = 0;
     let mut tested = 0usize;
     let mut found_ids: HashSet<String> = HashSet::new();
 
@@ -418,34 +528,83 @@ pub async fn run_fuzz(
                 continue;
             }
 
-            // Standard query parameter injection
+            // Per-injection-point: GET/query-string OR POST/form-body
+            // depending on the point's method. Forms keep their
+            // sibling parameters populated with benign values so the
+            // server actually validates the request.
             for point in &injection_points {
                 tested += 1;
                 if tested % 50 == 0 {
                     eprint!("\r  Progress: {}/{} ({} found)...", tested, total_tests, findings.len());
                 }
 
-                let finding_id = format!("CYWEB-FUZZ-{}-{}", payload.id, &point.param);
+                let finding_id = format!(
+                    "CYWEB-FUZZ-{}-{}-{}",
+                    payload.id, point.method, &point.param
+                );
                 if found_ids.contains(&finding_id) {
                     continue;
                 }
 
-                let fuzzed_url = inject_into_query(&point.url, &point.param, &payload.value);
-
                 let start = std::time::Instant::now();
-                let resp = match client.get(&fuzzed_url).send().await {
+                let (fuzzed_url, resp_result) = if point.method == "GET" {
+                    let url = inject_into_query(&point.url, &point.param, &payload.value);
+                    let r = client.get(&url).send().await;
+                    (url, r)
+                } else {
+                    // POST/PUT/PATCH/DELETE — send the form-encoded
+                    // body with our payload substituted for the
+                    // target param, siblings filled with `cyweb`.
+                    let mut form_pairs: Vec<(String, String)> =
+                        Vec::with_capacity(point.sibling_params.len() + 1);
+                    form_pairs.push((point.param.clone(), payload.value.clone()));
+                    for sib in &point.sibling_params {
+                        form_pairs.push((sib.clone(), "cyweb".into()));
+                    }
+                    let req = match point.method.as_str() {
+                        "POST"   => client.post(&point.url),
+                        "PUT"    => client.put(&point.url),
+                        "PATCH"  => client.patch(&point.url),
+                        "DELETE" => client.delete(&point.url),
+                        _        => client.post(&point.url),
+                    };
+                    let r = req.form(&form_pairs).send().await;
+                    (point.url.clone(), r)
+                };
+
+                let resp = match resp_result {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
                 let elapsed = start.elapsed().as_millis() as u64;
                 let status = resp.status().as_u16();
+                let reason = resp.status().canonical_reason().unwrap_or("").to_string();
                 let headers = resp.headers().clone();
                 let body = resp.text().await.unwrap_or_default();
 
-                // Baseline check
-                let body_hash = hash_body(&body);
-                if body_hash == baseline_hash && baseline_hash != 0 {
-                    continue;
+                // v0.8 Phase G — log every active-scan request to the
+                // shared event vec so the GUI's Active Scan tab can
+                // render an active-scan transaction log.
+                event_id += 1;
+                http_events.push(crate::scanner::HttpEvent {
+                    id: event_id,
+                    sent_at: chrono::Utc::now().to_rfc3339(),
+                    method: point.method.clone(),
+                    url: fuzzed_url.clone(),
+                    status,
+                    reason: reason.clone(),
+                    rtt_ms: elapsed,
+                    resp_size: body.len(),
+                    source: format!("fuzz:{}", payload.id),
+                });
+
+                // Baseline check — only meaningful for GET; POST
+                // bodies almost always differ from the GET baseline.
+                if point.method == "GET" {
+                    let body_hash = hash_body(&body);
+                    if body_hash == baseline_hash && baseline_hash != 0 {
+                        continue;
+                    }
                 }
 
                 if let Some(evidence) = evaluate_detection(&payload.detect, &body, &headers, status, elapsed, baseline_status) {
@@ -456,8 +615,8 @@ pub async fn run_fuzz(
                         severity: parse_severity(&payload.severity),
                         category: pf.id.clone(),
                         description: format!(
-                            "Parameter '{}' at {} is vulnerable. Payload: {}",
-                            point.param, point.url, payload.value
+                            "{} parameter '{}' at {} is vulnerable. Payload: {}",
+                            point.method, point.param, point.url, payload.value
                         ),
                         evidence,
                         url: fuzzed_url,
@@ -477,7 +636,7 @@ pub async fn run_fuzz(
     }
 
     eprintln!("\r  Completed: {}/{} tests, {} findings     ", tested, total_tests, findings.len());
-    findings
+    (findings, http_events)
 }
 
 // ── Special injection (headers, body) ────────────────────────────────────────

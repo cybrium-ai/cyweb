@@ -1,6 +1,6 @@
 //! Request evasion techniques — encode/transform URLs to bypass WAFs and filters.
 //!
-//! Mirrors Nikto's evasion modes 1-8 + A/B:
+//! Standard 9 evasion modes covering the well-known transforms:
 //!   1 — Random URI encoding (non-UTF8)
 //!   2 — Directory self-reference (/./path)
 //!   3 — Premature URL ending (%00)
