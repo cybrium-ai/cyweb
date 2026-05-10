@@ -138,7 +138,7 @@ jobs:
             artifacts/cyweb-windows-amd64.exe/cyweb-windows-amd64.exe
             artifacts/checksums.txt
 
-      # ── Auto-publish Homebrew formula to cybrium-ai/homebrew-tap ──
+      # ── Auto-publish Homebrew formula to cybrium-ai/homebrew-cli ──
       - name: Resolve version
         id: ver
         run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -156,9 +156,9 @@ jobs:
       - name: Checkout Homebrew tap
         uses: actions/checkout@v4
         with:
-          repository: cybrium-ai/homebrew-tap
+          repository: cybrium-ai/homebrew-cli
           token:      ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path:       homebrew-tap
+          path:       homebrew-cli
 
       # ── GHCR multi-arch image ──────────────────────────────────────
       # Uses the prebuilt linux binaries from the matrix `build` job so we
@@ -200,10 +200,10 @@ jobs:
         run: |
           VERSION="${{ steps.ver.outputs.tag }}"
           BASE="https://github.com/cybrium-ai/cyweb/releases/download/v${VERSION}"
-          mkdir -p homebrew-tap/Formula
-          cat > homebrew-tap/Formula/cyweb.rb <<RUBY
+          mkdir -p homebrew-cli/Formula
+          cat > homebrew-cli/Formula/cyweb.rb <<RUBY
           class Cyweb < Formula
-            desc     "Cybrium Web — fast web vulnerability scanner (Nikto replacement)"
+            desc     "Cybrium Web — fast web vulnerability scanner"
             homepage "https://github.com/cybrium-ai/cyweb"
             license  "Apache-2.0"
             version  "${VERSION}"
@@ -247,7 +247,7 @@ jobs:
             end
           end
           RUBY
-          cd homebrew-tap
+          cd homebrew-cli
           git config user.name  "cybrium-bot"
           git config user.email "bot@cybrium.ai"
           git add Formula/cyweb.rb
