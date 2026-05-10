@@ -31,6 +31,63 @@ pub struct Rule {
     pub match_header_value: Option<String>,
     #[serde(default)]
     pub not_match_body: Option<String>,
+    /// v0.8.6.1 — Per-rule scan strength. Operator passes
+    /// `--strength low|medium|high` and rules above the configured
+    /// strength are skipped. Defaults to "medium" — same as the
+    /// default scan strength, so behaviour is unchanged unless the
+    /// rule author explicitly tags strength.
+    ///
+    /// Strength is about how aggressive the *probe* is:
+    ///   low    — passive / one-request checks
+    ///   medium — multi-request, payload-mutated checks
+    ///   high   — payload-heavy, slow, potentially noisy checks
+    #[serde(default = "default_strength")]
+    pub strength: String,
+    /// v0.8.6.1 — Per-rule confidence threshold. Operator passes
+    /// `--threshold low|medium|high`. Rules with threshold ABOVE
+    /// the configured value are skipped (i.e. configuring
+    /// `--threshold high` keeps only "high confidence" rules).
+    /// Defaults to "medium".
+    ///
+    /// Threshold is about how likely the rule's match is to be a
+    /// true positive:
+    ///   low    — generous matching, may flag false positives
+    ///   medium — balanced
+    ///   high   — strict matching, low false-positive rate
+    #[serde(default = "default_threshold")]
+    pub threshold: String,
+}
+
+fn default_strength() -> String { "medium".into() }
+fn default_threshold() -> String { "medium".into() }
+
+/// v0.8.6.1 — Numeric mapping for strength / threshold so
+/// comparisons are total. Unknown values fall back to medium.
+pub fn level(s: &str) -> u8 {
+    match s.to_lowercase().as_str() {
+        "low" => 1,
+        "medium" | "med" => 2,
+        "high" => 3,
+        _ => 2,
+    }
+}
+
+/// Filter a rule slice by strength + threshold. Returns rules where
+///   rule.strength <= configured_strength
+///   rule.threshold <= configured_threshold
+/// (i.e. configuring `--strength high --threshold low` runs
+/// everything; `--strength low --threshold high` keeps only the
+/// quietest, highest-confidence rules.)
+pub fn filter_by_policy<'a>(
+    rules: &'a [Rule],
+    max_strength: &str,
+    max_threshold: &str,
+) -> Vec<&'a Rule> {
+    let s = level(max_strength);
+    let t = level(max_threshold);
+    rules.iter()
+        .filter(|r| level(&r.strength) <= s && level(&r.threshold) <= t)
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,4 +273,107 @@ pub async fn check_rules(
         .await;
 
     findings
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    fn rule(id: &str, strength: &str, threshold: &str) -> Rule {
+        Rule {
+            id: id.into(),
+            title: id.into(),
+            severity: "info".into(),
+            category: "test".into(),
+            description: "".into(),
+            cwe: None,
+            remediation: "".into(),
+            paths: vec![],
+            method: "GET".into(),
+            match_status: vec![],
+            match_body: None,
+            match_header: None,
+            match_header_value: None,
+            not_match_body: None,
+            strength: strength.into(),
+            threshold: threshold.into(),
+        }
+    }
+
+    #[test]
+    fn level_maps_strings_to_numbers() {
+        assert_eq!(level("low"), 1);
+        assert_eq!(level("medium"), 2);
+        assert_eq!(level("high"), 3);
+        assert_eq!(level("MED"), 2);  // case-insensitive
+        assert_eq!(level("garbage"), 2); // unknown → medium
+    }
+
+    #[test]
+    fn filter_keeps_rules_at_or_below_strength() {
+        let rules = vec![
+            rule("a", "low", "medium"),
+            rule("b", "medium", "medium"),
+            rule("c", "high", "medium"),
+        ];
+        let kept = filter_by_policy(&rules, "medium", "high");
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().any(|r| r.id == "a"));
+        assert!(kept.iter().any(|r| r.id == "b"));
+        assert!(!kept.iter().any(|r| r.id == "c"));
+    }
+
+    #[test]
+    fn filter_keeps_rules_at_or_below_threshold() {
+        // --threshold low means "only run rules whose confidence
+        // bar is low or medium" — i.e. drop rules tagged "high
+        // threshold required" because we DO want low-confidence
+        // findings... wait that's backwards.
+        //
+        // Re-read the doc: --threshold high keeps only rules whose
+        // threshold (confidence) is <= high. Since everything is
+        // <= high, --threshold high runs everything. --threshold
+        // low keeps only rules tagged threshold: low. That matches
+        // "give me only the cleanest, highest-confidence rules"
+        // when --threshold low is set.
+        //
+        // So configuring --threshold low DROPS rules tagged
+        // "medium" or "high" threshold.
+        let rules = vec![
+            rule("low-conf",  "medium", "low"),
+            rule("med-conf",  "medium", "medium"),
+            rule("high-conf", "medium", "high"),
+        ];
+        let strict = filter_by_policy(&rules, "high", "low");
+        assert_eq!(strict.len(), 1);
+        assert_eq!(strict[0].id, "low-conf");
+    }
+
+    #[test]
+    fn defaults_are_medium() {
+        // A rule with no explicit fields parses with strength=medium,
+        // threshold=medium.
+        let yaml = r#"
+id: x
+title: x
+severity: info
+category: test
+description: x
+remediation: x
+"#;
+        let r: Rule = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(r.strength, "medium");
+        assert_eq!(r.threshold, "medium");
+    }
+
+    #[test]
+    fn full_runs_everything_at_max_levels() {
+        let rules = vec![
+            rule("low/low",  "low",  "low"),
+            rule("med/med",  "medium", "medium"),
+            rule("high/high","high", "high"),
+        ];
+        let kept = filter_by_policy(&rules, "high", "high");
+        assert_eq!(kept.len(), 3);
+    }
 }

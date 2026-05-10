@@ -239,6 +239,85 @@ impl SessionMonitor {
         }
         false
     }
+
+    /// v0.8.6.1 — Periodic auth heartbeat. Call at scan phase
+    /// boundaries to detect session expiry between long-running
+    /// phases (paths discovery, template execution, fuzz). Probes
+    /// the target's BaseURL via the SHARED client (same cookie
+    /// jar that signature modules use), checks for expiry signals,
+    /// and re-runs form_login if needed.
+    ///
+    /// Returns true if a re-login was successful (or no re-login
+    /// was needed — i.e. session is still healthy). Returns false
+    /// only when re-login was attempted and failed; callers can
+    /// continue scanning unauthenticated in that case.
+    pub async fn heartbeat(&self) -> bool {
+        let resp = match self.client.get(&self.config.target).send().await {
+            Ok(r) => r,
+            Err(_) => return true, // network blip, not a session issue
+        };
+        if !self.looks_expired(&resp).await {
+            return true;
+        }
+        // Body-sentinel check requires consuming the body
+        let body = resp.text().await.unwrap_or_default();
+        if !self.body_indicates_expired(&body) {
+            // Status didn't trip looks_expired AND body didn't
+            // either — leave the session alone.
+            return true;
+        }
+
+        let n = self.relogin_count.fetch_add(1, Ordering::SeqCst);
+        if n >= self.config.max_relogins {
+            self.findings.lock().await.push(Finding {
+                id: format!("CYWEB-SESSION-EXHAUSTED-{}", n),
+                title: "Session expired — re-login attempts exhausted".into(),
+                severity: Severity::Info,
+                category: "Authentication".into(),
+                description: format!(
+                    "After {} re-login attempts, the target still rejects \
+                     authenticated requests. Continuing scan unauthenticated.",
+                    self.config.max_relogins,
+                ),
+                evidence: String::new(),
+                url: self.config.target.clone(),
+                cwe: None,
+                remediation: "Verify credentials, login URL, and session-cookie \
+                              behaviour on the target.".into(),
+                vuln_class: Some("authbypass".into()),
+            });
+            return false;
+        }
+
+        let new_auth = form_login(
+            &self.client,
+            &self.config.target,
+            &self.config.username,
+            &self.config.password,
+            self.config.login_url.as_deref(),
+        ).await;
+
+        if !new_auth.success {
+            return false;
+        }
+        *self.auth.lock().await = new_auth;
+        self.findings.lock().await.push(Finding {
+            id: format!("CYWEB-SESSION-RELOGIN-{}", n),
+            title: "Session re-established mid-scan".into(),
+            severity: Severity::Info,
+            category: "Authentication".into(),
+            description: "Cyweb detected session expiry at a phase boundary \
+                          (heartbeat probe returned an expired-session signal) \
+                          and successfully re-authenticated. Scan continued \
+                          without manual intervention.".into(),
+            evidence: format!("attempt #{} of {}", n + 1, self.config.max_relogins),
+            url: self.config.target.clone(),
+            cwe: None,
+            remediation: String::new(),
+            vuln_class: None,
+        });
+        true
+    }
 }
 
 /// Build a SessionConfig from CLI flags + ScanConfig. Called once
@@ -322,6 +401,23 @@ mod tests {
         let m = SessionMonitor::new(reqwest::Client::new(), dummy_config(), dummy_auth());
         let f = m.drain_findings().await;
         assert!(f.is_empty());
+    }
+
+    #[tokio::test]
+    async fn heartbeat_against_unreachable_target_does_not_panic() {
+        // RFC 5737 reserved test address — should always fail to
+        // connect. Heartbeat must treat that as a network blip
+        // (returns true) rather than triggering re-login.
+        let mut cfg = dummy_config();
+        cfg.target = "http://192.0.2.1:1/".into();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build().unwrap();
+        let m = SessionMonitor::new(client, cfg, dummy_auth());
+        let ok = m.heartbeat().await;
+        assert!(ok, "heartbeat should ignore network errors");
+        // No findings should have been emitted
+        assert!(m.drain_findings().await.is_empty());
     }
 
     // Integration tests against a mock HTTP server are gated behind

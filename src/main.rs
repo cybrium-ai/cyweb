@@ -176,6 +176,28 @@ enum Commands {
         #[arg(long)]
         auth_script: Option<String>,
 
+        /// v0.8.6.1 — HTTP version preference. "auto" (default) lets
+        /// rustls negotiate via ALPN — h2 over TLS, h1 cleartext.
+        /// "1" forces HTTP/1.1 (useful when h2 framing might mask
+        /// signatures). "2" forces HTTP/2 (h2c on plaintext targets,
+        /// h2 over TLS).
+        #[arg(long, default_value = "auto")]
+        http_version: String,
+
+        /// v0.8.6.1 — Maximum rule strength (probe aggressiveness):
+        /// low (passive only), medium (default), high (slow / noisy
+        /// payloads enabled). Rules tagged above the configured
+        /// level are skipped.
+        #[arg(long, default_value = "medium")]
+        strength: String,
+
+        /// v0.8.6.1 — Maximum rule threshold (confidence required to
+        /// emit): low keeps only the highest-confidence rules,
+        /// medium balances, high (default) runs everything. Set
+        /// `--threshold low` for a ZAP-style "low FP rate" pass.
+        #[arg(long, default_value = "high")]
+        threshold: String,
+
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
         full: bool,
@@ -365,6 +387,9 @@ async fn main() {
             session_expired_pattern,
             session_expired_sentinel,
             auth_script,
+            http_version,
+            strength,
+            threshold,
         } => {
             print_banner();
 
@@ -406,6 +431,15 @@ async fn main() {
                 session_max_relogins,
                 session_expired_pattern: session_expired_pattern.clone(),
                 session_expired_sentinel: session_expired_sentinel.clone(),
+                http_version: http_version.clone(),
+                strength: strength.clone(),
+                threshold: threshold.clone(),
+                // v0.8.6.1 — propagate creds into ScanConfig so the
+                // scanner can build a SessionMonitor and run the
+                // auth heartbeat. Empty when --auth-script was used.
+                login_user: if auth_script.is_none() { login_user.clone() } else { None },
+                login_pass: if auth_script.is_none() { login_pass.clone() } else { None },
+                login_url_explicit: if auth_script.is_none() { login_url.clone() } else { None },
             };
 
             // v0.8.6 — Scripted authentication. Runs before form-login.

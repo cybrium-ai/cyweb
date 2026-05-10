@@ -50,6 +50,28 @@ pub struct ScanConfig {
     pub session_expired_pattern: Option<String>,
     #[allow(dead_code)]
     pub session_expired_sentinel: Option<String>,
+    /// v0.8.6.1 — HTTP version preference: "auto" (default — let
+    /// rustls negotiate via ALPN; h2 over TLS, h1 cleartext), "1"
+    /// (force h1), "2" (force h2 — requires plaintext h2c if target
+    /// is HTTP, prior-knowledge mode).
+    pub http_version: String,
+    /// v0.8.6.1 — Maximum rule strength to run. Rules tagged
+    /// strength: high are skipped when this is "low" or "medium".
+    /// Defaults to "medium".
+    pub strength: String,
+    /// v0.8.6.1 — Maximum rule threshold (confidence required).
+    /// `--threshold low` keeps only rules tagged threshold: low
+    /// (highest confidence, lowest false-positive rate). Defaults
+    /// to "high" (run everything).
+    pub threshold: String,
+    /// v0.8.6.1 — Form-login credentials threaded through to the
+    /// scanner so it can build a SessionMonitor and re-login
+    /// between phases when the target invalidates the session
+    /// mid-scan. main.rs sets these from --login-user / --login-pass
+    /// when --auth-script wasn't used.
+    pub login_user: Option<String>,
+    pub login_pass: Option<String>,
+    pub login_url_explicit: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -185,6 +207,21 @@ impl RateLimiter {
     }
 }
 
+/// v0.8.6.1 — Test-only helper to confirm a built client honours
+/// the requested HTTP version. Used by smoke tests.
+#[cfg(test)]
+pub fn build_test_client(http_version: &str) -> Client {
+    let mut b = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .danger_accept_invalid_certs(true);
+    b = match http_version {
+        "1" | "1.1" | "http1" => b.http1_only(),
+        "2" | "h2" | "http2"  => b.http2_prior_knowledge(),
+        _                     => b,
+    };
+    b.build().unwrap()
+}
+
 pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let start = Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
@@ -202,6 +239,18 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         .danger_accept_invalid_certs(true)
         .cookie_store(true)
         .pool_max_idle_per_host(config.threads);
+
+    // v0.8.6.1 — HTTP version control. Default "auto" lets reqwest
+    // negotiate via ALPN (h2 over TLS, h1 cleartext) — this matches
+    // the previous behaviour. "1" forces HTTP/1.1 (useful for
+    // targets where the operator suspects h2 framing bugs are
+    // hiding bugs cyweb would otherwise catch). "2" enables
+    // prior-knowledge HTTP/2 (h2c over plaintext, h2 over TLS).
+    builder = match config.http_version.as_str() {
+        "1" | "1.1" | "http1" => builder.http1_only(),
+        "2" | "h2" | "http2"  => builder.http2_prior_knowledge(),
+        _                     => builder, // "auto" / anything else
+    };
 
     // Proxy
     if let Some(ref proxy_url) = config.proxy {
@@ -279,7 +328,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     let client = if default_headers.is_empty() {
         client
     } else {
-        Client::builder()
+        let mut authed_builder = Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
             .connect_timeout(Duration::from_secs(config.timeout_secs))
             .redirect(if config.follow_redirects {
@@ -291,7 +340,13 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             .danger_accept_invalid_certs(true)
             .cookie_store(true)
             .pool_max_idle_per_host(config.threads)
-            .default_headers(default_headers)
+            .default_headers(default_headers);
+        authed_builder = match config.http_version.as_str() {
+            "1" | "1.1" | "http1" => authed_builder.http1_only(),
+            "2" | "h2" | "http2"  => authed_builder.http2_prior_knowledge(),
+            _                     => authed_builder,
+        };
+        authed_builder
             .build()
             .expect("Failed to build authenticated HTTP client")
     };
@@ -317,6 +372,56 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     };
     log(&mut log_lines, "info", format!("Scan started against {}", config.target));
     let mut requests_made: usize = 0;
+
+    // v0.8.6.1 — SessionMonitor for mid-scan re-login. Active only
+    // when --login-user / --login-pass are set AND form login
+    // succeeded (verified by checking config.auth_cookie). Module
+    // owns its findings vec; we drain them at end-of-scan.
+    let session_monitor: Option<crate::session::SessionMonitor> = match (
+        &config.login_user, &config.login_pass,
+    ) {
+        (Some(u), Some(p)) if config.auth_cookie.is_some() => {
+            let extra_sentinels = config.session_expired_sentinel
+                .as_deref()
+                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                .unwrap_or_default();
+            let cfg = crate::session::config_from_cli(
+                &config.target,
+                u,
+                p,
+                config.login_url_explicit.as_deref(),
+                config.session_max_relogins,
+                config.session_expired_pattern.as_deref(),
+                extra_sentinels,
+            );
+            // Reuse the config.auth_cookie we already have as the
+            // initial LoginResult — we've already authenticated via
+            // main.rs before scanner.rs ran.
+            let initial = crate::form_login::LoginResult {
+                success: true,
+                cookies: config.auth_cookie.clone().unwrap_or_default(),
+                redirect_url: None,
+                error: None,
+            };
+            Some(crate::session::SessionMonitor::new(client.clone(), cfg, initial))
+        }
+        _ => None,
+    };
+    if session_monitor.is_some() {
+        eprintln!(
+            "  {} re-login monitor active (max {} retries)",
+            "session:".dimmed(),
+            config.session_max_relogins,
+        );
+    }
+    // Helper: heartbeat between phases. No-ops when no monitor is
+    // configured. Cap at one heartbeat per call site so back-to-back
+    // phase boundaries don't double-probe.
+    async fn session_heartbeat(m: Option<&crate::session::SessionMonitor>) {
+        if let Some(mon) = m {
+            mon.heartbeat().await;
+        }
+    }
 
     // ── Target info block ────────────────────────────────────────────
     let parsed = url::Url::parse(&target).ok();
@@ -431,6 +536,11 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         all_findings.extend(path_findings);
     }
 
+    // v0.8.6.1 — Heartbeat after path discovery (the longest phase
+    // for most scans). If the session died during the path phase,
+    // server / rules / templates would all run unauthenticated.
+    session_heartbeat(session_monitor.as_ref()).await;
+
     // Phase 5: Server-specific checks
     if run_phase("server") {
         eprintln!("{}", "Phase 5: Server-specific checks...".cyan());
@@ -441,11 +551,29 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Phase 6: YAML signature rules
-    let rules = if config.full_scan {
+    let all_loaded_rules = if config.full_scan {
         signatures::rules::load_rules(config.rules_file.as_deref(), true)
     } else {
         signatures::rules::load_rules(config.rules_file.as_deref(), false)
     };
+    // v0.8.6.1 — Apply per-rule policy filter. Rules tagged with
+    // strength/threshold above the configured policy are dropped
+    // before they ever run. Rules without explicit tags default to
+    // medium/medium so legacy behaviour is preserved when the
+    // operator doesn't pass --strength / --threshold.
+    let rule_refs = signatures::rules::filter_by_policy(
+        &all_loaded_rules, &config.strength, &config.threshold,
+    );
+    let dropped_by_policy = all_loaded_rules.len() - rule_refs.len();
+    let rules: Vec<_> = rule_refs.into_iter().cloned().collect();
+    if dropped_by_policy > 0 {
+        eprintln!(
+            "  {} {} rules dropped by policy (strength<={}, threshold<={})",
+            "policy:".dimmed(),
+            dropped_by_policy,
+            config.strength, config.threshold,
+        );
+    }
     eprintln!(
         "{}",
         format!("Phase 6: Signature rules ({} rules{})...", rules.len(), if config.full_scan { " — full" } else { "" }).cyan()
@@ -677,6 +805,12 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Phase 13: Advanced templates (multi-step, extractors, third-party-compatible)
+    // v0.8.6.1 — Heartbeat before templates. Templates are slow and
+    // thousands of them may run against an authenticated route — if
+    // the session died after rules but before templates, we'd waste
+    // 10+ minutes scanning anonymously.
+    session_heartbeat(session_monitor.as_ref()).await;
+
     if run_phase("templates") {
         let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
         if !tpls.is_empty() {
@@ -714,6 +848,13 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Deduplicate findings
+    // v0.8.6.1 — Drain SessionMonitor findings (re-login events,
+    // exhaustion warnings) into the report so operators can audit
+    // what happened mid-scan.
+    if let Some(ref monitor) = session_monitor {
+        all_findings.extend(monitor.drain_findings().await);
+    }
+
     all_findings.sort_by(|a, b| a.id.cmp(&b.id));
     all_findings.dedup_by(|a, b| a.id == b.id);
 
@@ -1051,4 +1192,35 @@ fn normalize_url(url: &str) -> String {
         url.to_string()
     };
     u.trim_end_matches('/').to_string()
+}
+
+#[cfg(test)]
+mod http_version_tests {
+    use super::*;
+
+    #[test]
+    fn auto_builds_without_panic() {
+        // Default — relies on ALPN; client should build cleanly.
+        let _c = build_test_client("auto");
+    }
+
+    #[test]
+    fn http1_only_builds_without_panic() {
+        let _c = build_test_client("1");
+        let _c = build_test_client("1.1");
+        let _c = build_test_client("http1");
+    }
+
+    #[test]
+    fn http2_prior_knowledge_builds_without_panic() {
+        let _c = build_test_client("2");
+        let _c = build_test_client("h2");
+        let _c = build_test_client("http2");
+    }
+
+    #[test]
+    fn unknown_value_falls_back_to_auto() {
+        // Garbage value shouldn't fail — just behaves as auto.
+        let _c = build_test_client("h3-please");
+    }
 }
