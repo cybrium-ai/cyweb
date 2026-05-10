@@ -19,8 +19,10 @@ mod checkpoint;
 mod form_login;
 mod evasion;
 mod mutate;
+mod ajax_spider;
 mod fuzz;
 mod gui;
+mod proxy;
 mod hardware_rot;
 mod templates;
 mod nuclei_convert;
@@ -202,6 +204,14 @@ enum Commands {
         /// Port for the local web UI (only meaningful with --gui).
         #[arg(long, default_value = "8990")]
         gui_port: u16,
+
+        /// v0.8 Phase N — drive a headless Chromium via Chrome DevTools
+        /// Protocol to crawl JS-rendered SPAs. Requires Chrome /
+        /// Chromium installed locally (auto-discovered, or override
+        /// via CYWEB_CHROME_PATH env). Slower than the static spider
+        /// but discovers routes that only appear after JS executes.
+        #[arg(long)]
+        ajax_spider: bool,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -218,6 +228,21 @@ enum Commands {
     },
     /// Show version info
     Version,
+
+    /// v0.8 Phase M — local intercept proxy. Listens on 127.0.0.1
+    /// and captures every request your browser sends through it,
+    /// surfacing them in the GUI's History tab. Plain HTTP is
+    /// fully captured; HTTPS CONNECT is tunneled (body not
+    /// inspected in this release; HTTPS MITM with a generated CA
+    /// is a v0.8.x follow-up).
+    Proxy {
+        /// Port for the HTTP intercept proxy.
+        #[arg(long, default_value = "8989")]
+        port: u16,
+        /// Port for the local web UI showing captured history.
+        #[arg(long, default_value = "8990")]
+        gui_port: u16,
+    },
 
     /// Report this host's hardware Root of Trust (TPM / Secure Enclave).
     /// Detection only — feeds scanner-identity and tamper-detection
@@ -274,6 +299,7 @@ async fn main() {
             templates,
             gui,
             gui_port,
+            ajax_spider,
         } => {
             print_banner();
 
@@ -311,6 +337,7 @@ async fn main() {
                 fuzz_enabled: fuzz,
                 payloads_dir: payloads,
                 templates_dir: templates,
+                ajax_spider,
             };
 
             // Form-based login: auto-detect login page, submit creds, inject cookies
@@ -624,6 +651,17 @@ async fn main() {
                         );
                     }
                 }
+            }
+        }
+
+        Commands::Proxy { port, gui_port } => {
+            eprintln!();
+            eprintln!("\x1b[1;35m  cyweb proxy mode\x1b[0m");
+            eprintln!("\x1b[2m  HTTP intercept on port {} · GUI History tab on http://127.0.0.1:{}\x1b[0m", port, gui_port);
+            eprintln!();
+            if let Err(e) = proxy::run_proxy_subcommand(port, gui_port).await {
+                eprintln!("\x1b[1;31m  proxy failed: {}\x1b[0m", e);
+                process::exit(2);
             }
         }
 
