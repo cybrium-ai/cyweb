@@ -108,6 +108,40 @@
   .panel { display: none; }
   .panel.active { display: block; }
 
+  /* ── Sub-tab strip (used inside Spider panel) ─────────────────────── */
+  .subtabs {
+    display: flex; gap: 2px; margin-bottom: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px; width: fit-content;
+  }
+  .subtab {
+    background: transparent; border: none; border-radius: 6px;
+    padding: 6px 14px; cursor: pointer; color: var(--muted);
+    font-size: 13px; font-weight: 500;
+  }
+  .subtab:hover { color: var(--text); }
+  .subtab.active { background: var(--surface-2); color: var(--primary-2); }
+  .subtab .badge {
+    margin-left: 6px; background: var(--surface);
+    border-radius: 99px; padding: 1px 6px; font-size: 10px; font-weight: 600;
+  }
+  .subpanel { display: none; }
+  .subpanel.active { display: block; }
+
+  .tag-chip {
+    display: inline-block; padding: 1px 7px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; margin-right: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .tag-chip.Password { color: var(--sev-high);  border-color: var(--sev-high); }
+  .tag-chip.Form     { color: var(--accent);    border-color: var(--accent); }
+  .tag-chip.Script   { color: #facc15;          border-color: #facc15; }
+  .tag-chip.Upload   { color: var(--sev-medium); border-color: var(--sev-medium); }
+  .tag-chip.JSON     { color: #a78bfa;          border-color: #a78bfa; }
+  .tag-chip.Comment  { color: var(--muted); }
+  .tag-chip.MailTo   { color: var(--muted); }
+
   /* ── Filter bar ────────────────────────────────────────────────────────── */
   .filters {
     display: flex; gap: 12px; align-items: center; margin-bottom: 14px;
@@ -284,47 +318,117 @@
     <div id="alert-groups"></div>
   </div>
 
-  <!-- ─── Spider panel (Phase E) ─────────────────────────────────────── -->
+  <!-- ─── Spider panel (Phase E + H — three sub-tabs) ──────────────────── -->
   <div class="panel" id="p-spider">
-    <div class="filters">
-      <input id="spider-search" type="search" placeholder="Search URL…">
-      <select id="spider-scope">
-        <option value="">All scope</option>
-        <option value="in">In scope</option>
-        <option value="out">Out of scope</option>
-      </select>
-      <select id="spider-method">
-        <option value="">All methods</option>
-        <option value="GET">GET</option>
-        <option value="POST">POST</option>
-        <option value="PUT">PUT</option>
-        <option value="PATCH">PATCH</option>
-        <option value="DELETE">DELETE</option>
-      </select>
-      <select id="spider-source">
-        <option value="">All sources</option>
-        <option value="target">Target</option>
-        <option value="robots">robots.txt</option>
-        <option value="sitemap">sitemap.xml</option>
-        <option value="link">Link</option>
-        <option value="form">Form</option>
-      </select>
-      <span class="count-pill" id="spider-count"></span>
+    <div class="subtabs">
+      <button class="subtab active" data-sub="urls">URLs <span class="badge" id="b-sub-urls">0</span></button>
+      <button class="subtab" data-sub="nodes">Added Nodes <span class="badge" id="b-sub-nodes">0</span></button>
+      <button class="subtab" data-sub="messages">Messages <span class="badge" id="b-sub-msgs">0</span></button>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th data-sort="processed">●</th>
-            <th data-sort="method">Method</th>
-            <th data-sort="url">URI</th>
-            <th data-sort="status_code">Code</th>
-            <th data-sort="seed_source">Source</th>
-            <th data-sort="in_scope">Flags</th>
-          </tr>
-        </thead>
-        <tbody id="spider-rows"></tbody>
-      </table>
+
+    <!-- URLs sub-tab — every URL the spider observed (incl. out-of-scope) -->
+    <div class="subpanel active" id="sp-urls">
+      <div class="filters">
+        <input id="spider-search" type="search" placeholder="Search URL…">
+        <select id="spider-scope">
+          <option value="">All scope</option>
+          <option value="in">In scope</option>
+          <option value="out">Out of scope</option>
+        </select>
+        <select id="spider-method">
+          <option value="">All methods</option>
+          <option value="GET">GET</option><option value="POST">POST</option>
+          <option value="PUT">PUT</option><option value="PATCH">PATCH</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+        <select id="spider-source">
+          <option value="">All sources</option>
+          <option value="target">Target</option>
+          <option value="robots">robots.txt</option>
+          <option value="sitemap">sitemap.xml</option>
+          <option value="link">Link</option>
+          <option value="form">Form</option>
+        </select>
+        <span class="count-pill" id="spider-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="processed">●</th>
+              <th data-sort="method">Method</th>
+              <th data-sort="url">URI</th>
+              <th data-sort="status_code">Code</th>
+              <th data-sort="seed_source">Source</th>
+              <th data-sort="in_scope">Flags</th>
+            </tr>
+          </thead>
+          <tbody id="spider-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Added Nodes sub-tab — only in-scope, processed, distinct (URL+method) -->
+    <div class="subpanel" id="sp-nodes">
+      <div class="filters">
+        <input id="nodes-search" type="search" placeholder="Search URL…">
+        <span class="count-pill" id="nodes-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>●</th>
+              <th>Method</th>
+              <th>URI</th>
+            </tr>
+          </thead>
+          <tbody id="nodes-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Messages sub-tab — every spider HTTP request with full transaction detail -->
+    <div class="subpanel" id="sp-messages">
+      <div class="filters">
+        <input id="msg-search" type="search" placeholder="Search URL or tag…">
+        <select id="msg-status">
+          <option value="">All statuses</option>
+          <option value="2">2xx</option><option value="3">3xx</option>
+          <option value="4">4xx</option><option value="5">5xx</option>
+        </select>
+        <select id="msg-tag">
+          <option value="">All tags</option>
+          <option value="Script">Script</option>
+          <option value="Form">Form</option>
+          <option value="Password">Password</option>
+          <option value="Comment">Comment</option>
+          <option value="JSON">JSON</option>
+          <option value="MailTo">MailTo</option>
+          <option value="Upload">Upload</option>
+        </select>
+        <span class="count-pill" id="msg-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>●</th>
+              <th>Req. Time</th>
+              <th>Method</th>
+              <th>URL</th>
+              <th>Code</th>
+              <th>Reason</th>
+              <th>RTT</th>
+              <th>Hdr Size</th>
+              <th>Body Size</th>
+              <th>Highest Alert</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody id="msg-rows"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -410,9 +514,17 @@
     document.getElementById('b-spider').textContent = DATA.spider_nodes.length;
     document.getElementById('b-active').textContent = DATA.http_events.length;
 
+    // Spider sub-tab badges (Phase H)
+    document.getElementById('b-sub-urls').textContent  = DATA.spider_nodes.length;
+    const addedNodes = DATA.spider_nodes.filter(n => n.in_scope && n.processed);
+    document.getElementById('b-sub-nodes').textContent = addedNodes.length;
+    document.getElementById('b-sub-msgs').textContent  = addedNodes.length;
+
     renderTiles();
     renderAlerts();
     renderSpider();
+    renderNodes();
+    renderMessages();
     renderActive();
   }
 
@@ -581,6 +693,75 @@
     }).join('');
   }
 
+  /* ── Spider sub-tabs (Phase H) ────────────────────────────────────── */
+  function renderNodes() {
+    const q = document.getElementById('nodes-search').value.toLowerCase();
+    const items = DATA.spider_nodes
+      .filter(n => n.in_scope && n.processed)
+      .filter(n => !q || n.url.toLowerCase().includes(q));
+    document.getElementById('nodes-count').textContent =
+      `${items.length} added nodes`;
+    const tbody = document.getElementById('nodes-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="3" class="empty">No nodes — run the spider with <code>--spider</code>.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(n => `
+      <tr>
+        <td>🟢</td>
+        <td><span class="method ${escape(n.method)}">${escape(n.method)}</span></td>
+        <td class="url-cell" title="${escape(n.url)}">${escape(n.url)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function renderMessages() {
+    const q       = document.getElementById('msg-search').value.toLowerCase();
+    const sFilter = document.getElementById('msg-status').value;
+    const tFilter = document.getElementById('msg-tag').value;
+    const items = DATA.spider_nodes
+      .filter(n => n.processed && (n.status_code != null))
+      .filter(n => !sFilter || (n.status_code && Math.floor(n.status_code/100) === Number(sFilter)))
+      .filter(n => !tFilter || (n.tags || []).includes(tFilter))
+      .filter(n => {
+        if (!q) return true;
+        const hay = (n.url + ' ' + (n.tags || []).join(' ')).toLowerCase();
+        return hay.includes(q);
+      });
+    document.getElementById('msg-count').textContent =
+      `${items.length} of ${DATA.spider_nodes.filter(n=>n.processed).length} messages`;
+    const tbody = document.getElementById('msg-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="11" class="empty">No spider messages — run with <code>--spider</code>.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(n => {
+      const ts = n.req_timestamp ? n.req_timestamp.split('T')[1]?.split('.')[0] : '—';
+      const code = n.status_code != null
+        ? `<span class="status-cell status-${Math.floor(n.status_code/100)}xx">${n.status_code}</span>`
+        : '—';
+      const alert = n.highest_alert
+        ? `<span class="sev ${escape(n.highest_alert)}">${escape(n.highest_alert)}</span>`
+        : '<span style="color:var(--muted)">—</span>';
+      const tags = (n.tags || []).map(t => `<span class="tag-chip ${escape(t)}">${escape(t)}</span>`).join('');
+      return `
+        <tr>
+          <td>🟢</td>
+          <td><code style="color:var(--muted);font-size:11px">${escape(ts)}</code></td>
+          <td><span class="method ${escape(n.method)}">${escape(n.method)}</span></td>
+          <td class="url-cell" title="${escape(n.url)}">${escape(n.url)}</td>
+          <td>${code}</td>
+          <td style="color:var(--muted);font-size:12px">${escape(n.reason || '')}</td>
+          <td><code>${n.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(n.resp_header_size)}</code></td>
+          <td><code>${formatBytes(n.resp_body_size)}</code></td>
+          <td>${alert}</td>
+          <td>${tags || '<span style="color:var(--muted)">—</span>'}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
   /* ── Active Scan (Phase G — Sent Messages) ──────────────────────────── */
   function renderActive() {
     const q = document.getElementById('active-search').value.toLowerCase();
@@ -641,6 +822,21 @@
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'p-' + panel));
   }
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.panel));
+
+  /* Spider sub-tab switching (Phase H) */
+  document.querySelectorAll('.subtab').forEach(t => {
+    t.onclick = () => {
+      const sub = t.dataset.sub;
+      document.querySelectorAll('.subtab').forEach(x => x.classList.toggle('active', x.dataset.sub === sub));
+      document.querySelectorAll('.subpanel').forEach(p => p.classList.toggle('active', p.id === 'sp-' + sub));
+    };
+  });
+  ['nodes-search'].forEach(id => document.getElementById(id).addEventListener('input', renderNodes));
+  ['msg-search','msg-status','msg-tag'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', renderMessages);
+    el.addEventListener('change', renderMessages);
+  });
 
   /* ── Filter bindings ────────────────────────────────────────────────── */
   ['alert-search','alert-sev'].forEach(id => document.getElementById(id).addEventListener('input', renderAlerts));

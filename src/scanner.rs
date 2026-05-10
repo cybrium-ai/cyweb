@@ -615,6 +615,33 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         requests_made,
     };
 
+    // Phase H — for each spider node, surface the highest-severity
+    // finding raised on its URL. Lets the GUI's Spider tab show a
+    // "Highest Alert" column matching ZAP. Severity rank: critical >
+    // high > medium > low > info.
+    fn sev_rank(s: &Severity) -> u8 {
+        match s {
+            Severity::Critical => 5,
+            Severity::High     => 4,
+            Severity::Medium   => 3,
+            Severity::Low      => 2,
+            Severity::Info     => 1,
+        }
+    }
+    use std::collections::HashMap;
+    let mut url_to_max: HashMap<&str, &Severity> = HashMap::new();
+    for f in &all_findings {
+        let cur = url_to_max.get(f.url.as_str());
+        if cur.map_or(true, |s| sev_rank(&f.severity) > sev_rank(s)) {
+            url_to_max.insert(&f.url, &f.severity);
+        }
+    }
+    for n in crawl_nodes.iter_mut() {
+        if let Some(sev) = url_to_max.get(n.url.as_str()) {
+            n.highest_alert = Some(format!("{:?}", sev).to_lowercase());
+        }
+    }
+
     ScanResult {
         target,
         started_at,

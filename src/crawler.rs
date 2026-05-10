@@ -46,6 +46,27 @@ pub struct CrawledNode {
     pub status_code: Option<u16>,
     pub content_type: Option<String>,
     pub parent_url: Option<String>,
+    /// Phase H — request transaction detail. Populated for every node
+    /// the spider actually fetches; remains None / 0 for nodes that
+    /// were only observed as a link in another page (out-of-scope or
+    /// queued-but-not-yet-fetched at end-of-scan).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub req_timestamp: Option<String>,
+    pub rtt_ms: u64,
+    pub resp_header_size: usize,
+    pub resp_body_size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Auto-derived content classification tags — Script / Form /
+    /// Comment / Password / JSON / MailTo / Upload — same idea as ZAP's
+    /// `<tags>` column. Empty until the body is parsed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Severity of the highest-severity finding raised on this URL.
+    /// Populated post-scan by walking ScanResult.findings. None when
+    /// no phase flagged this URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highest_alert: Option<String>,
 }
 
 /// Returned by `crawl()`. Findings + node list + flat URL list (for
@@ -233,31 +254,50 @@ pub async fn crawl_with_nodes(
             continue;
         }
 
+        let req_started = std::time::Instant::now();
+        let req_ts      = chrono::Utc::now().to_rfc3339();
         let resp = match client.get(&url).send().await {
             Ok(r) => r,
             Err(_) => continue,
         };
+        let rtt = req_started.elapsed().as_millis() as u64;
         requests += 1;
-        let status = resp.status().as_u16();
-        let ctype  = resp
+        let status   = resp.status().as_u16();
+        let reason   = resp.status().canonical_reason().map(|s| s.to_string());
+        let ctype    = resp
             .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+        // Approximate header size — sum of name + ": " + value + CRLF
+        // for each. Won't match the wire-level byte count exactly but
+        // close enough for the spider's "Size Resp. Header" column.
+        let resp_header_size: usize = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| k.as_str().len() + 4 + v.as_bytes().len())
+            .sum();
         let final_url = resp.url().to_string();
-
-        // Mark the requested URL as processed (status + content-type
-        // observed).
-        if let Some(n) = node_index.get_mut(&(url.clone(), "GET".to_string())) {
-            n.processed = true;
-            n.status_code = Some(status);
-            n.content_type = ctype.clone();
-        }
 
         let body = match resp.text().await {
             Ok(b) => b,
             Err(_) => continue,
         };
+        let body_size = body.len();
+        let tags = derive_tags(ctype.as_deref().unwrap_or(""), &body);
+
+        // Update the node with the full transaction detail.
+        if let Some(n) = node_index.get_mut(&(url.clone(), "GET".to_string())) {
+            n.processed = true;
+            n.status_code = Some(status);
+            n.content_type = ctype.clone();
+            n.req_timestamp = Some(req_ts);
+            n.rtt_ms = rtt;
+            n.resp_header_size = resp_header_size;
+            n.resp_body_size = body_size;
+            n.reason = reason;
+            n.tags = tags;
+        }
 
         // Skip HTML parsing for non-HTML content types.
         let is_html = ctype.as_deref().unwrap_or("").contains("html");
@@ -424,7 +464,55 @@ fn upsert_node<'a>(
         status_code: None,
         content_type: None,
         parent_url: parent,
+        req_timestamp: None,
+        rtt_ms: 0,
+        resp_header_size: 0,
+        resp_body_size: 0,
+        reason: None,
+        tags: Vec::new(),
+        highest_alert: None,
     })
+}
+
+/// Inspect a fetched HTML / JSON / etc. response body and label it
+/// with content-classifier tags — same shape as ZAP's spider Tags
+/// column. Cheap string scan; no full HTML parse.
+fn derive_tags(content_type: &str, body: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    let lower_ct = content_type.to_ascii_lowercase();
+    if lower_ct.contains("json") {
+        tags.push("JSON".into());
+    }
+    if lower_ct.contains("xml") {
+        tags.push("XML".into());
+    }
+    if !lower_ct.contains("html") {
+        return tags;
+    }
+    // HTML body — look at substrings cheaply (case-insensitive).
+    let lc = body.to_ascii_lowercase();
+    if lc.contains("<script") {
+        tags.push("Script".into());
+    }
+    if lc.contains("<form") {
+        tags.push("Form".into());
+    }
+    if lc.contains("type=\"password\"") || lc.contains("type='password'") {
+        tags.push("Password".into());
+    }
+    if lc.contains("multipart/form-data") {
+        tags.push("Upload".into());
+    }
+    if lc.contains("<!--") {
+        tags.push("Comment".into());
+    }
+    if lc.contains("mailto:") {
+        tags.push("MailTo".into());
+    }
+    if lc.contains("<a href=\"http") || lc.contains("<a href='http") {
+        tags.push("Link".into());
+    }
+    tags
 }
 
 /// Parse `Disallow:` lines from a robots.txt body. Returns the path
