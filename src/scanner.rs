@@ -560,6 +560,32 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         all_findings.extend(retire_findings);
     }
 
+    // Phase 8.5: Passive HTML analysis (CSRF tokens + SRI). Re-uses
+    // the spider's URL list — no extra discovery, but does refetch
+    // each HTML body to inspect form/script/link tags. Fast on small
+    // sites, capped at 200 URLs.
+    if run_phase("passive") {
+        eprintln!("{}", "Phase 8.5: Passive HTML analysis...".cyan());
+        let passive_findings =
+            signatures::passive_html::check_passive(&client, &target, &crawled_urls).await;
+        eprintln!("  {} findings", passive_findings.len());
+        requests_made += passive_findings.len().max(1);
+        all_findings.extend(passive_findings);
+    }
+
+    // Phase 8.6: Mixed-content / HTTPS↔HTTP availability. Probes the
+    // root + sample of crawled paths over plain HTTP — flags any
+    // 200 OK that means HTTPS isn't enforced.
+    if run_phase("mixed-content") {
+        eprintln!("{}", "Phase 8.6: Mixed-content probe...".cyan());
+        let mixed_findings =
+            signatures::mixed_content::check_mixed_content(&client, &target, &crawled_urls)
+                .await;
+        eprintln!("  {} findings", mixed_findings.len());
+        requests_made += mixed_findings.len().max(1);
+        all_findings.extend(mixed_findings);
+    }
+
     // Phase 9: CVE matching
     eprintln!("{}", "Phase 9: CVE matching...".cyan());
     let cve_findings = signatures::cves::match_cves(&server_info);
