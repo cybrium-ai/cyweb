@@ -29,6 +29,8 @@ mod template_convert;
 // v0.8.5 — protocol runners (DNS / TCP / headless) + interactsh OAST.
 mod protocol_runners;
 mod interactsh;
+// v0.8.6 — Two-axis tuning taxonomy (phase + vulnerability class).
+mod tuning;
 // Sprint 76 — modern vuln classes that need Rust runtime extensions.
 // race needs concurrent-burst orchestration; websocket needs a WS client.
 mod race;
@@ -157,8 +159,11 @@ enum Commands {
         #[arg(long)]
         client_key: Option<String>,
 
-        /// Tuning: scan only these categories (comma-separated)
-        /// Categories: headers,paths,methods,server,rules,tls,cves,openapi,spider
+        /// Tuning: filter scan by phase and/or vulnerability class
+        /// (comma-separated). Phases gate scan stages; classes filter
+        /// findings. Accepts canonical names ("sqli", "paths") and
+        /// Nikto-style numeric/letter slots ("0", "9", "a"). Run
+        /// `cyweb tuning-list` for the full 33-slot taxonomy.
         #[arg(long)]
         tuning: Option<String>,
 
@@ -234,6 +239,15 @@ enum Commands {
     },
     /// Show version info
     Version,
+
+    /// v0.8.6 — Print the full tuning taxonomy (33 slots: 20 vuln
+    /// classes + 13 phases). Use any combination with `--tuning
+    /// <a>,<b>,...` on `cyweb scan`. Accepts canonical names
+    /// ("sqli", "paths") AND Nikto-style numeric/letter slots
+    /// ("0", "9", "a") — including the full Nikto -Tuning surface
+    /// (slots 0-9 and a-e) plus cyweb extensions (ssrf, xxe, ssti,
+    /// tls, secrets).
+    TuningList,
 
     /// Local intercept proxy. Listens on 127.0.0.1 and captures every
     /// request your browser sends through it, surfacing them in the
@@ -635,6 +649,10 @@ async fn main() {
                 eprintln!("Run: cyweb scan <url> --templates {}", out);
             }
         }
+        Commands::TuningList => {
+            print!("{}", tuning::render_list());
+        }
+
         Commands::Version => {
             let current = env!("CARGO_PKG_VERSION");
             println!("cyweb {} — Cybrium AI Web Scanner", current);
