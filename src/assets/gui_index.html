@@ -43,8 +43,8 @@
     border-bottom: 1px solid var(--border);
     position: sticky; top: 0; z-index: 10;
   }
-  header img { height: 32px; width: 32px; }
-  header .title { font-weight: 600; font-size: 16px; }
+  header .brand-shield { height: 30px; width: auto; }
+  header .brand-word   { height: 22px; width: auto; margin-left: -2px; }
   header .target {
     margin-left: 24px; color: var(--muted); font-family: ui-monospace, monospace;
     font-size: 13px;
@@ -430,8 +430,8 @@
 <body>
 
 <header>
-  <img src="/logo.svg" alt="Cybrium"/>
-  <span class="title">cyweb</span>
+  <img src="/logo.svg" alt="Cybrium" class="brand-shield"/>
+  <img src="/wordmark.svg" alt="Cybrium" class="brand-word"/>
   <span class="target" id="target-host">—</span>
   <span class="meta" id="scan-meta"></span>
   <div class="export-group">

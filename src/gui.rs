@@ -28,8 +28,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// Static assets bundled at compile time.
-const INDEX_HTML: &str = include_str!("assets/gui_index.html");
-const LOGO_SVG:   &str = include_str!("assets/cybrium-logo.svg");
+const INDEX_HTML:    &str = include_str!("assets/gui_index.html");
+const LOGO_SVG:      &str = include_str!("assets/cybrium-logo.svg");
+const WORDMARK_SVG:  &str = include_str!("assets/cybrium-word.svg");
 
 #[derive(Clone)]
 struct AppState {
@@ -83,6 +84,7 @@ async fn start_server_inner(
     let app = Router::new()
         .route("/",                    get(serve_index))
         .route("/logo.svg",            get(serve_logo))
+        .route("/wordmark.svg",        get(serve_wordmark))
         .route("/api/result",          get(api_result))
         .route("/api/export.json",     get(export_json))
         .route("/api/export.csv",      get(export_csv))
@@ -117,6 +119,14 @@ async fn serve_logo() -> Response {
     (
         [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
         LOGO_SVG,
+    )
+        .into_response()
+}
+
+async fn serve_wordmark() -> Response {
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        WORDMARK_SVG,
     )
         .into_response()
 }
