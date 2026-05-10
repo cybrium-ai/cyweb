@@ -90,6 +90,7 @@ pub struct RuleStat {
     pub status: String,     // "ok" / "skipped" / "error"
 }
 
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LogLine {
     pub at: String,    // RFC3339 timestamp
