@@ -463,6 +463,7 @@
         <button class="tab active"  data-panel="alerts">Alerts <span class="badge" id="b-alerts">0</span></button>
         <button class="tab"          data-panel="spider">Spider <span class="badge" id="b-spider">0</span></button>
         <button class="tab"          data-panel="active">Active Scan <span class="badge" id="b-active">0</span></button>
+        <button class="tab"          data-panel="history">History <span class="badge" id="b-history">0</span></button>
         <button class="tab"          data-panel="chart">Chart</button>
         <button class="tab"          data-panel="output">Output <span class="badge" id="b-output">0</span></button>
       </div>
@@ -686,6 +687,48 @@
     </div>
   </div>
 
+  <!-- ─── History panel (proxy mode) — every captured req/resp ───────── -->
+  <div class="panel" id="p-history">
+    <div class="filters">
+      <input id="hist-search" type="search" placeholder="Search URL or kind…">
+      <select id="hist-method">
+        <option value="">All methods</option>
+        <option>GET</option><option>POST</option><option>PUT</option>
+        <option>PATCH</option><option>DELETE</option><option>CONNECT</option><option>HEAD</option>
+      </select>
+      <select id="hist-status">
+        <option value="">All statuses</option>
+        <option value="2">2xx</option><option value="3">3xx</option>
+        <option value="4">4xx</option><option value="5">5xx</option>
+      </select>
+      <select id="hist-kind">
+        <option value="">All kinds</option>
+        <option value="http">HTTP</option>
+        <option value="tunnel">HTTPS tunnel</option>
+      </select>
+      <span class="count-pill" id="hist-count"></span>
+      <button onclick="exportHistory()" title="Download as JSON">↓ JSON</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>At</th>
+            <th>Method</th>
+            <th>URL</th>
+            <th>Code</th>
+            <th>RTT</th>
+            <th>Req</th>
+            <th>Resp</th>
+            <th>Kind</th>
+          </tr>
+        </thead>
+        <tbody id="hist-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ─── Chart panel (Phase P) — Response Chart ─────────────────────── -->
   <div class="panel" id="p-chart">
     <div class="filters">
@@ -808,6 +851,84 @@
     renderRules();
     renderChart();
     renderOutput();
+    fetchHistory();
+  }
+
+  /* ── History (proxy mode) — polls /api/proxy_events when active ──── */
+  let HISTORY = [];
+  let HIST_TIMER = null;
+
+  async function fetchHistory() {
+    try {
+      const r = await fetch('/api/proxy_events');
+      HISTORY = await r.json();
+    } catch { HISTORY = []; }
+    document.getElementById('b-history').textContent = HISTORY.length;
+    renderHistory();
+  }
+
+  function startHistoryPoll() {
+    if (HIST_TIMER) return;
+    HIST_TIMER = setInterval(fetchHistory, 2000);
+  }
+  function stopHistoryPoll() {
+    if (HIST_TIMER) { clearInterval(HIST_TIMER); HIST_TIMER = null; }
+  }
+
+  function renderHistory() {
+    const q   = document.getElementById('hist-search').value.toLowerCase();
+    const m   = document.getElementById('hist-method').value;
+    const sf  = document.getElementById('hist-status').value;
+    const k   = document.getElementById('hist-kind').value;
+    const items = HISTORY.filter(e => {
+      if (m && e.method !== m) return false;
+      if (sf && Math.floor(e.status / 100) !== Number(sf)) return false;
+      if (k && e.kind !== k) return false;
+      if (q) {
+        const hay = `${e.url} ${e.kind} ${e.method}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).slice().reverse();   // newest first
+
+    document.getElementById('hist-count').textContent =
+      `${items.length} of ${HISTORY.length} events`;
+    const tbody = document.getElementById('hist-rows');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">
+        No captured traffic. Run <code>cyweb proxy</code>, configure your browser's proxy
+        to <code>127.0.0.1:8989</code>, and browse the target — captured requests appear here.
+      </td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(e => {
+      const ts = e.at ? e.at.split('T')[1]?.split('.')[0] ?? e.at : '—';
+      const cls = e.status > 0 ? `status-${Math.floor(e.status/100)}xx` : '';
+      const kindBadge = e.kind === 'tunnel'
+        ? '<span class="tag-chip" style="color:var(--accent);border-color:var(--accent)">TLS tunnel</span>'
+        : '<span class="tag-chip">HTTP</span>';
+      return `
+        <tr>
+          <td><code>${e.id}</code></td>
+          <td><code style="color:var(--muted);font-size:11px">${escape(ts)}</code></td>
+          <td><span class="method ${escape(e.method)}">${escape(e.method)}</span></td>
+          <td class="url-cell" title="${escape(e.url)}">${escape(e.url)}</td>
+          <td class="status-cell ${cls}">${e.status > 0 ? e.status : '—'}</td>
+          <td><code>${e.rtt_ms}ms</code></td>
+          <td><code>${formatBytes(e.req_size)}</code></td>
+          <td><code>${formatBytes(e.resp_size)}</code></td>
+          <td>${kindBadge}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function exportHistory() {
+    const blob = new Blob([JSON.stringify(HISTORY, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'cyweb-history.json';
+    a.click(); URL.revokeObjectURL(url);
   }
 
   /* ── Per-rule progress (Phase O) ──────────────────────────────────── */
@@ -1367,6 +1488,14 @@
     // reads as 0 while display:none, so the first render is wrong
     // until we re-paint.
     if (panel === 'chart') renderChart();
+    // History tab polls proxy_events while it's the active tab so
+    // captured traffic streams in live.
+    if (panel === 'history') {
+      fetchHistory();
+      startHistoryPoll();
+    } else {
+      stopHistoryPoll();
+    }
   }
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.panel));
 
@@ -1387,6 +1516,11 @@
     };
   });
   document.getElementById('rule-search').addEventListener('input', renderRules);
+  ['hist-search','hist-method','hist-status','hist-kind'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input',  renderHistory);
+    el.addEventListener('change', renderHistory);
+  });
   ['nodes-search'].forEach(id => document.getElementById(id).addEventListener('input', renderNodes));
   ['msg-search','msg-status','msg-tag'].forEach(id => {
     const el = document.getElementById(id);
