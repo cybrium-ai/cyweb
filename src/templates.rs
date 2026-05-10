@@ -32,6 +32,40 @@ pub struct Template {
     /// Raw TCP checks.
     #[serde(default)]
     pub tcp: Vec<TcpStep>,
+    /// v0.8.4 — workflow chaining. Templates with this block don't
+    /// have their own `requests:` — they reference other templates
+    /// by path / tag and conditionally fire subtemplates when the
+    /// parent matches.
+    #[serde(default)]
+    pub workflows: Vec<WorkflowStep>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkflowStep {
+    /// Path to a referenced template, relative to the templates
+    /// root. Mutually exclusive with `tags`.
+    #[serde(default)]
+    pub template: String,
+    /// Tag selector — fire any template whose tag list contains
+    /// any of these. Mutually exclusive with `template`.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Match conditions that gate subtemplates. Empty = always
+    /// fire subtemplates if the parent ran (regardless of match).
+    #[serde(default)]
+    pub matchers: Vec<WorkflowMatcher>,
+    /// Nested workflow steps that only fire when this step's
+    /// matchers fire.
+    #[serde(default)]
+    pub subtemplates: Vec<WorkflowStep>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkflowMatcher {
+    pub name: String,
+    /// "and" / "or" — how subtemplates are gated.
+    #[serde(default = "default_condition")]
+    pub condition: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -292,6 +326,43 @@ async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<
     let mut findings = Vec::new();
     let mut variables: HashMap<String, String> = tpl.variables.clone();
     variables.insert("BaseURL".to_string(), target.to_string());
+
+    // v0.8.4 — Workflow templates execute differently from HTTP
+    // templates: they reference other templates and chain
+    // subtemplates conditionally. The full templates registry isn't
+    // currently passed down to execute_template (it would be a
+    // bigger refactor to thread through), so for v0.8.4 we surface
+    // the workflow step as an INFO-level finding so the operator
+    // can see "this workflow ran but its referenced templates need
+    // to be loaded separately." Future work: thread the registry
+    // through and execute referenced templates inline.
+    if !tpl.workflows.is_empty() {
+        for wf in &tpl.workflows {
+            let target_label = if !wf.template.is_empty() {
+                wf.template.clone()
+            } else if !wf.tags.is_empty() {
+                format!("tags={}", wf.tags.join(","))
+            } else {
+                "(unspecified)".into()
+            };
+            findings.push(Finding {
+                id: format!("CYWEB-WORKFLOW-{}-{}", tpl.id, target_label),
+                title: format!("Workflow chain: {} → {}", tpl.info.name, target_label),
+                severity: parse_severity(&tpl.info.severity),
+                category: "Workflow".into(),
+                description: format!(
+                    "Template `{}` is a workflow that references `{}`. {} subtemplate(s) chained on match.",
+                    tpl.id, target_label, wf.subtemplates.len()
+                ),
+                evidence: format!("workflow step: {}", target_label),
+                url: target.to_string(),
+                cwe: None,
+                remediation: tpl.info.remediation.clone(),
+                vuln_class: None,
+            });
+        }
+        return findings;
+    }
 
     // Execute HTTP request steps in sequence (multi-step)
     for (step_idx, step) in tpl.requests.iter().enumerate() {

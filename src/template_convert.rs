@@ -94,13 +94,18 @@ fn convert_single(src_yaml: &str) -> Result<String, String> {
     let info = tmpl.get("info")
         .ok_or("Missing info block")?;
 
-    // Only convert HTTP templates
-    let http = tmpl.get("http")
-        .or_else(|| tmpl.get("requests"))
-        .ok_or("Not an HTTP template (DNS/TCP/headless not supported yet)")?;
+    // v0.8.4 — Workflow templates have a top-level `workflows:` block
+    // instead of `http:`/`requests:`. They reference other templates
+    // by relative path and conditionally chain follow-up templates
+    // when a parent matches. Convert these into a dedicated cyweb
+    // template kind so the runtime can execute them in dependency
+    // order.
+    let workflows = tmpl.get("workflows");
+    let http = tmpl.get("http").or_else(|| tmpl.get("requests"));
 
-    let requests_arr = http.as_sequence()
-        .ok_or("http/requests is not a list")?;
+    if workflows.is_none() && http.is_none() {
+        return Err("Not an HTTP template (DNS/TCP/headless not supported yet)".into());
+    }
 
     // Build cyweb template
     let mut output = serde_yaml::Mapping::new();
@@ -156,7 +161,32 @@ fn convert_single(src_yaml: &str) -> Result<String, String> {
 
     output.insert(serde_yaml::Value::String("info".into()), serde_yaml::Value::Mapping(info_out));
 
-    // Convert request steps
+    // v0.8.4 — workflow path. Emit a `workflows:` block with each
+    // referenced template's path + matchers + nested subtemplates
+    // preserved. cyweb's runtime reads this and executes the
+    // referenced templates in order, chaining subtemplates when the
+    // parent's matchers fire.
+    if let Some(wf) = workflows {
+        if let Some(wf_seq) = wf.as_sequence() {
+            let converted: Vec<serde_yaml::Value> = wf_seq.iter()
+                .map(convert_workflow_step)
+                .collect();
+            output.insert(
+                serde_yaml::Value::String("workflows".into()),
+                serde_yaml::Value::Sequence(converted),
+            );
+        }
+        return serde_yaml::to_string(&serde_yaml::Value::Mapping(output))
+            .map_err(|e| format!("Serialization error: {}", e));
+    }
+
+    // HTTP path — fall through with `http` (which we know is Some
+    // here because the early-return guard above caught the
+    // "neither workflows nor http" case).
+    let http = http.ok_or("internal: http unset after guard")?;
+    let requests_arr = http.as_sequence()
+        .ok_or("http/requests is not a list")?;
+
     let mut steps = Vec::new();
     for req in requests_arr {
         let step = convert_request_step(req)?;
@@ -166,6 +196,43 @@ fn convert_single(src_yaml: &str) -> Result<String, String> {
 
     serde_yaml::to_string(&serde_yaml::Value::Mapping(output))
         .map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// Convert a single workflow step entry. Each entry references a
+/// template (by path or tag) and optionally includes match
+/// conditions + nested subtemplates that fire only when the parent
+/// matches. We preserve the structure verbatim — runtime handles
+/// the chaining logic.
+fn convert_workflow_step(step: &serde_yaml::Value) -> serde_yaml::Value {
+    let mut out = serde_yaml::Mapping::new();
+
+    // template path or tags reference
+    if let Some(t) = step.get("template") {
+        out.insert(serde_yaml::Value::String("template".into()), t.clone());
+    }
+    if let Some(t) = step.get("tags") {
+        out.insert(serde_yaml::Value::String("tags".into()), t.clone());
+    }
+
+    // matchers — used to gate subtemplates
+    if let Some(m) = step.get("matchers") {
+        out.insert(serde_yaml::Value::String("matchers".into()), m.clone());
+    }
+
+    // subtemplates — recursively converted (nested workflow chains)
+    if let Some(subs) = step.get("subtemplates") {
+        if let Some(seq) = subs.as_sequence() {
+            let nested: Vec<serde_yaml::Value> = seq.iter()
+                .map(convert_workflow_step)
+                .collect();
+            out.insert(
+                serde_yaml::Value::String("subtemplates".into()),
+                serde_yaml::Value::Sequence(nested),
+            );
+        }
+    }
+
+    serde_yaml::Value::Mapping(out)
 }
 
 fn convert_request_step(req: &serde_yaml::Value) -> Result<serde_yaml::Value, String> {
@@ -419,5 +486,55 @@ mod raw_http_tests {
         assert_eq!(r.path, "{{BaseURL}}/login");
         assert_eq!(r.headers[0], ("Host".into(), "{{Hostname}}".into()));
         assert_eq!(r.body, "{{username}}={{password}}");
+    }
+}
+
+#[cfg(test)]
+mod workflow_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_template_converts() {
+        let yaml = r#"
+id: test-workflow
+info:
+  name: Test workflow
+  severity: high
+workflows:
+  - template: cves/2021/CVE-2021-12345.yaml
+    matchers:
+      - name: vulnerable
+    subtemplates:
+      - template: exploits/follow-up.yaml
+"#;
+        let result = convert_single(yaml).expect("workflow templates should convert");
+        assert!(result.contains("workflows:"), "output should contain workflows block");
+        assert!(result.contains("CVE-2021-12345.yaml"), "should preserve template path");
+        assert!(result.contains("follow-up.yaml"), "should preserve subtemplate");
+    }
+
+    #[test]
+    fn workflow_with_tags_selector() {
+        let yaml = r#"
+id: tag-workflow
+info: { name: Tag workflow, severity: low }
+workflows:
+  - tags: [cve, rce]
+"#;
+        let result = convert_single(yaml).expect("tag-selector workflow converts");
+        assert!(result.contains("tags:"));
+    }
+
+    #[test]
+    fn neither_http_nor_workflows_rejected() {
+        let yaml = r#"
+id: dns-only
+info: { name: DNS only, severity: info }
+dns:
+  - name: example.com
+    type: A
+"#;
+        let err = convert_single(yaml).expect_err("DNS-only template should be rejected");
+        assert!(err.contains("Not an HTTP template"));
     }
 }
