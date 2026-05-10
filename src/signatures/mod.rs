@@ -3,6 +3,8 @@
 pub mod cves;
 pub mod headers;
 pub mod methods;
+pub mod mixed_content;
+pub mod passive_html;
 pub mod paths;
 pub mod rules;
 pub mod server;
