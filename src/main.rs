@@ -434,6 +434,12 @@ async fn main() {
                 http_version: http_version.clone(),
                 strength: strength.clone(),
                 threshold: threshold.clone(),
+                // v0.8.6.1 — propagate creds into ScanConfig so the
+                // scanner can build a SessionMonitor and run the
+                // auth heartbeat. Empty when --auth-script was used.
+                login_user: if auth_script.is_none() { login_user.clone() } else { None },
+                login_pass: if auth_script.is_none() { login_pass.clone() } else { None },
+                login_url_explicit: if auth_script.is_none() { login_url.clone() } else { None },
             };
 
             // v0.8.6 — Scripted authentication. Runs before form-login.

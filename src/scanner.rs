@@ -64,6 +64,14 @@ pub struct ScanConfig {
     /// (highest confidence, lowest false-positive rate). Defaults
     /// to "high" (run everything).
     pub threshold: String,
+    /// v0.8.6.1 — Form-login credentials threaded through to the
+    /// scanner so it can build a SessionMonitor and re-login
+    /// between phases when the target invalidates the session
+    /// mid-scan. main.rs sets these from --login-user / --login-pass
+    /// when --auth-script wasn't used.
+    pub login_user: Option<String>,
+    pub login_pass: Option<String>,
+    pub login_url_explicit: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -365,6 +373,56 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     log(&mut log_lines, "info", format!("Scan started against {}", config.target));
     let mut requests_made: usize = 0;
 
+    // v0.8.6.1 — SessionMonitor for mid-scan re-login. Active only
+    // when --login-user / --login-pass are set AND form login
+    // succeeded (verified by checking config.auth_cookie). Module
+    // owns its findings vec; we drain them at end-of-scan.
+    let session_monitor: Option<crate::session::SessionMonitor> = match (
+        &config.login_user, &config.login_pass,
+    ) {
+        (Some(u), Some(p)) if config.auth_cookie.is_some() => {
+            let extra_sentinels = config.session_expired_sentinel
+                .as_deref()
+                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                .unwrap_or_default();
+            let cfg = crate::session::config_from_cli(
+                &config.target,
+                u,
+                p,
+                config.login_url_explicit.as_deref(),
+                config.session_max_relogins,
+                config.session_expired_pattern.as_deref(),
+                extra_sentinels,
+            );
+            // Reuse the config.auth_cookie we already have as the
+            // initial LoginResult — we've already authenticated via
+            // main.rs before scanner.rs ran.
+            let initial = crate::form_login::LoginResult {
+                success: true,
+                cookies: config.auth_cookie.clone().unwrap_or_default(),
+                redirect_url: None,
+                error: None,
+            };
+            Some(crate::session::SessionMonitor::new(client.clone(), cfg, initial))
+        }
+        _ => None,
+    };
+    if session_monitor.is_some() {
+        eprintln!(
+            "  {} re-login monitor active (max {} retries)",
+            "session:".dimmed(),
+            config.session_max_relogins,
+        );
+    }
+    // Helper: heartbeat between phases. No-ops when no monitor is
+    // configured. Cap at one heartbeat per call site so back-to-back
+    // phase boundaries don't double-probe.
+    async fn session_heartbeat(m: Option<&crate::session::SessionMonitor>) {
+        if let Some(mon) = m {
+            mon.heartbeat().await;
+        }
+    }
+
     // ── Target info block ────────────────────────────────────────────
     let parsed = url::Url::parse(&target).ok();
     let hostname = parsed.as_ref().and_then(|u| u.host_str()).unwrap_or("unknown");
@@ -477,6 +535,11 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         }
         all_findings.extend(path_findings);
     }
+
+    // v0.8.6.1 — Heartbeat after path discovery (the longest phase
+    // for most scans). If the session died during the path phase,
+    // server / rules / templates would all run unauthenticated.
+    session_heartbeat(session_monitor.as_ref()).await;
 
     // Phase 5: Server-specific checks
     if run_phase("server") {
@@ -742,6 +805,12 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Phase 13: Advanced templates (multi-step, extractors, third-party-compatible)
+    // v0.8.6.1 — Heartbeat before templates. Templates are slow and
+    // thousands of them may run against an authenticated route — if
+    // the session died after rules but before templates, we'd waste
+    // 10+ minutes scanning anonymously.
+    session_heartbeat(session_monitor.as_ref()).await;
+
     if run_phase("templates") {
         let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
         if !tpls.is_empty() {
@@ -779,6 +848,13 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     }
 
     // Deduplicate findings
+    // v0.8.6.1 — Drain SessionMonitor findings (re-login events,
+    // exhaustion warnings) into the report so operators can audit
+    // what happened mid-scan.
+    if let Some(ref monitor) = session_monitor {
+        all_findings.extend(monitor.drain_findings().await);
+    }
+
     all_findings.sort_by(|a, b| a.id.cmp(&b.id));
     all_findings.dedup_by(|a, b| a.id == b.id);
 
