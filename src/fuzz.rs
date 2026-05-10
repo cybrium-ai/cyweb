@@ -431,7 +431,7 @@ pub async fn run_fuzz(
     crawled_urls: &[String],
     baseline_hash: u64,
     custom_payloads_dir: Option<&str>,
-) -> Vec<Finding> {
+) -> (Vec<Finding>, Vec<crate::scanner::HttpEvent>) {
     let fuzz_ctx = FuzzContext::from_scan(server_info, crawled_urls);
 
     // Load payloads
@@ -498,6 +498,8 @@ pub async fn run_fuzz(
     eprintln!("  {} injection points x {} payloads = {} tests", injection_points.len(), total_payloads, total_tests);
 
     let mut findings: Vec<Finding> = Vec::new();
+    let mut http_events: Vec<crate::scanner::HttpEvent> = Vec::new();
+    let mut event_id: u32 = 0;
     let mut tested = 0usize;
     let mut found_ids: HashSet<String> = HashSet::new();
 
@@ -576,8 +578,25 @@ pub async fn run_fuzz(
                 };
                 let elapsed = start.elapsed().as_millis() as u64;
                 let status = resp.status().as_u16();
+                let reason = resp.status().canonical_reason().unwrap_or("").to_string();
                 let headers = resp.headers().clone();
                 let body = resp.text().await.unwrap_or_default();
+
+                // v0.8 Phase G — log every active-scan request to the
+                // shared event vec so the GUI's Active Scan tab can
+                // render the same view ZAP shows under "Sent Messages".
+                event_id += 1;
+                http_events.push(crate::scanner::HttpEvent {
+                    id: event_id,
+                    sent_at: chrono::Utc::now().to_rfc3339(),
+                    method: point.method.clone(),
+                    url: fuzzed_url.clone(),
+                    status,
+                    reason: reason.clone(),
+                    rtt_ms: elapsed,
+                    resp_size: body.len(),
+                    source: format!("fuzz:{}", payload.id),
+                });
 
                 // Baseline check — only meaningful for GET; POST
                 // bodies almost always differ from the GET baseline.
@@ -617,7 +636,7 @@ pub async fn run_fuzz(
     }
 
     eprintln!("\r  Completed: {}/{} tests, {} findings     ", tested, total_tests, findings.len());
-    findings
+    (findings, http_events)
 }
 
 // ── Special injection (headers, body) ────────────────────────────────────────

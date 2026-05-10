@@ -53,6 +53,36 @@ pub struct ScanResult {
     pub server_info: ServerInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_info: Option<TlsInfo>,
+    /// v0.8 Phase E — every URL the spider observed, including
+    /// out-of-scope ones (which we recorded but didn't fetch). The
+    /// GUI's Spider tab renders this list directly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spider_nodes: Vec<crate::crawler::CrawledNode>,
+    /// v0.8 Phase G — timestamped log of every active-scan request
+    /// (i.e. requests sent from the fuzz phase). Mirrors ZAP's
+    /// "Active Scan → Sent Messages" pane: ID, method, URL, status,
+    /// RTT, response size. Empty when --fuzz wasn't enabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub http_events: Vec<HttpEvent>,
+}
+
+/// One row of the "Active Scan / Sent Messages" log.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HttpEvent {
+    pub id: u32,
+    /// RFC3339 timestamp of when the request was sent.
+    pub sent_at: String,
+    pub method: String,
+    pub url: String,
+    pub status: u16,
+    pub reason: String,
+    pub rtt_ms: u64,
+    pub resp_size: usize,
+    /// What this request was probing (e.g. "fuzz:xss-script-01",
+    /// "spider", "header-check"). Free-form, surfaced in the GUI as
+    /// a small badge so the operator can tell which phase generated
+    /// the traffic.
+    pub source: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -386,22 +416,34 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         requests_made += 1;
     }
 
-    // Phase 8: Spider/Crawler (if enabled)
+    // Phase 8: Spider/Crawler (if enabled). Returns the rich
+    // CrawlOutcome (nodes + findings + flat URL list) so the GUI's
+    // Spider tab and the per-phase scanners both have what they need.
     let mut crawled_urls: Vec<String> = Vec::new();
+    let mut crawl_nodes: Vec<crate::crawler::CrawledNode> = Vec::new();
     if config.spider_enabled {
         eprintln!(
             "{}",
             format!("Phase 8: Spider (depth={})...", config.spider_depth).cyan()
         );
-        let (spider_findings, spider_requests, urls) =
-            crate::crawler::crawl(&client, &target, config.spider_depth, config.threads).await;
+        let outcome = crate::crawler::crawl_with_nodes(
+            &client, &target, config.spider_depth, config.threads,
+        )
+        .await;
+        let in_scope_count = outcome.nodes.iter().filter(|n| n.in_scope).count();
+        let out_count = outcome.nodes.len() - in_scope_count;
         eprintln!(
-            "  {} pages crawled, {} findings",
-            spider_requests, spider_findings.len()
+            "  {} pages crawled · {} nodes ({} in-scope, {} out-of-scope) · {} findings",
+            outcome.requests_made,
+            outcome.nodes.len(),
+            in_scope_count,
+            out_count,
+            outcome.findings.len(),
         );
-        requests_made += spider_requests;
-        all_findings.extend(spider_findings);
-        crawled_urls = urls;
+        requests_made += outcome.requests_made;
+        all_findings.extend(outcome.findings);
+        crawled_urls = outcome.crawled_urls;
+        crawl_nodes  = outcome.nodes;
     }
 
     // Phase 8.5: Passive HTML analysis (CSRF tokens + SRI). Re-uses
@@ -495,18 +537,27 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         }
     }
 
-    // Phase 12: Active fuzzing — context-aware, YAML-driven
+    // Phase 12: Active fuzzing — context-aware, YAML-driven.
+    // v0.8 Phase G — fuzz now also emits a list of HttpEvent rows
+    // (timestamped request log) so the GUI's Active Scan tab can
+    // render the same view ZAP shows in its "Active Scan → Sent
+    // Messages" pane.
+    let mut fuzz_events: Vec<HttpEvent> = Vec::new();
     if config.fuzz_enabled && run_phase("fuzz") {
         eprintln!(
             "{}",
             format!("Phase 12: Active fuzzing ({})...", crate::fuzz::describe()).cyan()
         );
-        let fuzz_findings = crate::fuzz::run_fuzz(
+        let (fuzz_findings, evts) = crate::fuzz::run_fuzz(
             &client, &target, &server_info, &crawled_urls, baseline_hash,
             config.payloads_dir.as_deref(),
         ).await;
-        eprintln!("  {} injection vulnerabilities found", fuzz_findings.len());
+        eprintln!(
+            "  {} injection vulnerabilities found · {} requests logged",
+            fuzz_findings.len(), evts.len()
+        );
         all_findings.extend(fuzz_findings);
+        fuzz_events = evts;
     }
 
     // Phase 13: Advanced templates (multi-step, extractors, Nuclei-compatible)
@@ -573,6 +624,8 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         summary,
         server_info,
         tls_info,
+        spider_nodes: crawl_nodes,
+        http_events: fuzz_events,
     }
 }
 
