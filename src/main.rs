@@ -25,7 +25,7 @@ mod gui;
 mod proxy;
 mod hardware_rot;
 mod templates;
-mod nuclei_convert;
+mod template_convert;
 // Sprint 76 — modern vuln classes that need Rust runtime extensions.
 // race needs concurrent-burst orchestration; websocket needs a WS client.
 mod race;
@@ -190,7 +190,7 @@ enum Commands {
         #[arg(long)]
         payloads: Option<String>,
 
-        /// Template directory for advanced multi-step scanning (Nuclei-compatible)
+        /// Template directory for advanced multi-step scanning
         #[arg(long)]
         templates: Option<String>,
 
@@ -217,9 +217,12 @@ enum Commands {
     UpdateRules,
     /// Check for updates and self-update the binary
     Update,
-    /// Convert Nuclei templates to cyweb format
-    ConvertNuclei {
-        /// Input directory containing Nuclei templates
+    /// Convert third-party YAML scan templates to cyweb format.
+    /// Accepts the common "external template" YAML schema (info /
+    /// http / requests / matchers blocks) and emits cyweb's own
+    /// template format under ~/.cyweb/templates/.
+    ConvertTemplates {
+        /// Input directory containing third-party templates
         #[arg(long, short = 'i')]
         input: String,
         /// Output directory for converted cyweb templates (default: ~/.cyweb/templates/)
@@ -607,14 +610,14 @@ async fn main() {
                 }
             }
         }
-        Commands::ConvertNuclei { input, output } => {
+        Commands::ConvertTemplates { input, output } => {
             let out = output.unwrap_or_else(|| {
                 dirs::home_dir()
                     .map(|h| h.join(".cyweb/templates").to_string_lossy().to_string())
                     .unwrap_or_else(|| "templates-out".to_string())
             });
-            eprintln!("{}", format!("Converting Nuclei templates: {} -> {}", input, out).cyan());
-            let result = nuclei_convert::convert_directory(&input, &out);
+            eprintln!("{}", format!("Converting templates: {} -> {}", input, out).cyan());
+            let result = template_convert::convert_directory(&input, &out);
             eprintln!("{}", format!(
                 "Done: {} total, {} converted, {} skipped, {} errors",
                 result.total, result.converted, result.skipped, result.errors

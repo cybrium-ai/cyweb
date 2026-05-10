@@ -1,14 +1,18 @@
-//! Nuclei template converter — imports Nuclei YAML templates into cyweb format.
+//! Third-party template converter — imports the common external
+//! "scan template" YAML schema into cyweb's own template format.
 //!
 //! Usage:
-//!   cyweb convert-nuclei --input /path/to/nuclei-templates --output ~/.cyweb/templates/
+//!   cyweb convert-templates --input /path/to/templates --output ~/.cyweb/templates/
 //!
-//! Converts Nuclei's HTTP templates to cyweb's template format. Non-HTTP
-//! templates (DNS, TCP, SSL, headless) are skipped with a warning.
+//! The expected source schema is the broad community standard:
+//! `id` + `info` block + `http` (or `requests`) block with
+//! `matchers` / `extractors` / `headers` etc. HTTP templates are
+//! converted; non-HTTP variants (DNS, TCP, SSL, headless) are
+//! skipped with a warning.
 
 use std::path::Path;
 
-/// Convert a directory of Nuclei templates to cyweb template format.
+/// Convert a directory of third-party templates to cyweb format.
 pub fn convert_directory(input_dir: &str, output_dir: &str) -> ConvertResult {
     let input = Path::new(input_dir);
     let output = Path::new(output_dir);
@@ -78,21 +82,21 @@ pub struct ConvertResult {
     pub error_details: Vec<String>,
 }
 
-/// Convert a single Nuclei template YAML string to cyweb format.
-fn convert_single(nuclei_yaml: &str) -> Result<String, String> {
-    let nuclei: serde_yaml::Value = serde_yaml::from_str(nuclei_yaml)
+/// Convert a single template YAML string to cyweb format.
+fn convert_single(src_yaml: &str) -> Result<String, String> {
+    let tmpl: serde_yaml::Value = serde_yaml::from_str(src_yaml)
         .map_err(|e| format!("YAML parse error: {}", e))?;
 
-    let id = nuclei.get("id")
+    let id = tmpl.get("id")
         .and_then(|v| v.as_str())
         .ok_or("Missing id field")?;
 
-    let info = nuclei.get("info")
+    let info = tmpl.get("info")
         .ok_or("Missing info block")?;
 
     // Only convert HTTP templates
-    let http = nuclei.get("http")
-        .or_else(|| nuclei.get("requests"))
+    let http = tmpl.get("http")
+        .or_else(|| tmpl.get("requests"))
         .ok_or("Not an HTTP template (DNS/TCP/headless not supported yet)")?;
 
     let requests_arr = http.as_sequence()
@@ -101,10 +105,10 @@ fn convert_single(nuclei_yaml: &str) -> Result<String, String> {
     // Build cyweb template
     let mut output = serde_yaml::Mapping::new();
 
-    // id
+    // id — namespace under cyweb-tmpl- to identify converted entries
     output.insert(
         serde_yaml::Value::String("id".into()),
-        serde_yaml::Value::String(format!("nuclei-{}", id)),
+        serde_yaml::Value::String(format!("cyweb-tmpl-{}", id)),
     );
 
     // info block
@@ -164,54 +168,54 @@ fn convert_single(nuclei_yaml: &str) -> Result<String, String> {
         .map_err(|e| format!("Serialization error: {}", e))
 }
 
-fn convert_request_step(nuclei_req: &serde_yaml::Value) -> Result<serde_yaml::Value, String> {
+fn convert_request_step(req: &serde_yaml::Value) -> Result<serde_yaml::Value, String> {
     let mut step = serde_yaml::Mapping::new();
 
     // Method
-    if let Some(method) = nuclei_req.get("method") {
+    if let Some(method) = req.get("method") {
         step.insert(serde_yaml::Value::String("method".into()), method.clone());
     }
 
     // Path
-    if let Some(path) = nuclei_req.get("path") {
+    if let Some(path) = req.get("path") {
         step.insert(serde_yaml::Value::String("path".into()), path.clone());
     }
 
     // Body
-    if let Some(body) = nuclei_req.get("body") {
+    if let Some(body) = req.get("body") {
         step.insert(serde_yaml::Value::String("body".into()), body.clone());
     }
 
     // Headers
-    if let Some(headers) = nuclei_req.get("headers") {
+    if let Some(headers) = req.get("headers") {
         step.insert(serde_yaml::Value::String("headers".into()), headers.clone());
     }
 
     // Matchers — pass through (format is compatible)
-    if let Some(matchers) = nuclei_req.get("matchers") {
+    if let Some(matchers) = req.get("matchers") {
         step.insert(serde_yaml::Value::String("matchers".into()), matchers.clone());
     }
 
     // Matchers condition
-    if let Some(cond) = nuclei_req.get("matchers-condition") {
+    if let Some(cond) = req.get("matchers-condition") {
         step.insert(serde_yaml::Value::String("matchers_condition".into()), cond.clone());
     }
 
     // Extractors — pass through
-    if let Some(extractors) = nuclei_req.get("extractors") {
+    if let Some(extractors) = req.get("extractors") {
         step.insert(serde_yaml::Value::String("extractors".into()), extractors.clone());
     }
 
     // Redirects
-    if let Some(redirects) = nuclei_req.get("redirects") {
+    if let Some(redirects) = req.get("redirects") {
         step.insert(serde_yaml::Value::String("redirects".into()), redirects.clone());
     }
-    if let Some(max) = nuclei_req.get("max-redirects") {
+    if let Some(max) = req.get("max-redirects") {
         step.insert(serde_yaml::Value::String("max_redirects".into()), max.clone());
     }
 
     // Cookie reuse
-    if let Some(cr) = nuclei_req.get("cookie-reuse") {
+    if let Some(cr) = req.get("cookie-reuse") {
         step.insert(serde_yaml::Value::String("cookie_reuse".into()), cr.clone());
     }
 

@@ -1,9 +1,10 @@
 //! Advanced template engine — multi-step requests, extractors, matcher DSL.
 //!
-//! This is the Nuclei-equivalent engine. Templates define a sequence of HTTP
-//! requests with extractors that pull values from responses and feed them into
-//! subsequent requests. Matchers support AND/OR logic, regex, status, size,
-//! word, binary, and DSL conditions.
+//! Templates define a sequence of HTTP requests with extractors that pull
+//! values from responses and feed them into subsequent requests. Matchers
+//! support AND/OR logic, regex, status, size, word, binary, and DSL
+//! conditions. Compatible with the broad community template-YAML schema
+//! (see `cyweb convert-templates`).
 //!
 //! Templates are loaded from `templates/` (embedded) or `~/.cyweb/templates/`.
 
@@ -539,7 +540,7 @@ fn evaluate_single_matcher(
     }
 }
 
-/// Simple DSL evaluator for common Nuclei DSL patterns.
+/// Simple DSL evaluator for the common template-DSL patterns.
 fn evaluate_dsl(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, status: u16) -> bool {
     let expr = expr.trim();
 

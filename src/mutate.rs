@@ -1,6 +1,6 @@
 //! Mutate — guess additional file/directory names by brute-force patterns.
 //!
-//! Modes (matching Nikto):
+//! Standard 6 mutation modes:
 //!   1 — Test all files with common extensions (.bak, .old, .tmp, etc.)
 //!   2 — Guess password/credential file names
 //!   3 — Enumerate usernames via Apache ~user

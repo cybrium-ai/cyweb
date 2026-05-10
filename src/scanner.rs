@@ -637,7 +637,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         fuzz_events = evts;
     }
 
-    // Phase 13: Advanced templates (multi-step, extractors, Nuclei-compatible)
+    // Phase 13: Advanced templates (multi-step, extractors, third-party-compatible)
     if run_phase("templates") {
         let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
         if !tpls.is_empty() {
