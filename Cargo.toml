@@ -1,6 +1,6 @@
 [package]
 name = "cyweb"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2021"
 authors = ["Cybrium AI <hello@cybrium.ai>"]
 description = "Fast, accurate web vulnerability scanner. Scans headers, paths, server configs, and known vulnerabilities."
@@ -42,6 +42,11 @@ md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
 urlencoding = "2"
+# v0.8.5 — DNS template execution. hickory-resolver is the canonical
+# pure-Rust DNS client (rebranded trust-dns). Async, A/AAAA/CNAME/
+# TXT/MX/NS out of the box. tokio-runtime feature aligns with cyweb's
+# existing tokio scheduler.
+hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime", "system-config"] }
 # Sprint 76 Phase 7 — WebSocket hijacking. tokio-tungstenite is the
 # canonical async WS client; rustls-tls-native-roots matches reqwest's
 # rustls feature so we don't drag in OpenSSL.
