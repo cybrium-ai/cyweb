@@ -113,18 +113,18 @@ paths).
 
 **Why deferred:** No customer demand yet. Adds maintenance burden.
 
-## Per-rule strength selectors
+## ~~Per-rule strength selectors~~ — done v0.8.7
 
-**What it is:** Low / Medium / High / Insane strength per active
-scan rule. Currently every cyweb rule runs at "Medium" intensity
-(one payload per injection point). Insane mode would fan out 10x
-more payloads.
+Shipped as `--strength low|medium|high` plus a paired `--threshold`
+axis (rule confidence). Rule YAML schema gained `strength:` /
+`threshold:` fields; filter applied at scan-config build time in
+scanner.rs. See `signatures::rules::policy_tests`.
 
-**Concrete plan:**
-- Add `strength: Severity` per payload in the YAML.
-- Add `--scan-strength <low|medium|high|insane>` flag.
-- Multiplier table: Low=0.5x, Medium=1x, High=2x, Insane=10x
-  payloads run per injection point.
+The "Insane" multiplier idea is NOT in v0.8.7 — strength there
+gates *which* rules run, it doesn't fan out more payloads per rule.
+If the multiplier behaviour is still wanted, that's a separate
+small patch (add `payload_multiplier` field to the fuzz payload
+selector).
 
 ## Rule-level enable/disable from CLI
 
@@ -148,3 +148,93 @@ scan and back off automatically.
 - After each request, if status is 429 or response body matches
   known WAF fingerprints, double the delay between subsequent
   requests for that host. Reset on first 200 OK.
+
+---
+
+# Carried forward from v0.8.7 sprint review
+
+These are the ONLY items that survived the v0.8.6 → v0.8.7
+"close all soft deferrals" sweep. Every other gap from the
+MEGA3 (ZAP / Nikto / Nuclei) audit is shipped.
+
+## `code:` / `flow:` / `javascript:` template kinds
+
+**What it is:** ~5% of upstream community templates carry a
+`code:` block (JavaScript or Python execution) or a `flow:`
+block (ECMAScript-style request orchestration, newer than
+`workflows:`). Templates of this kind get rejected at conversion
+today — they cover bespoke runtime logic that can't be expressed
+purely as matchers + extractors.
+
+**Why deferred:** Real engineering — needs a sandboxed runtime
+embedded in cyweb. Two viable approaches:
+- **wasmtime** — operator-supplied JS/Python compiled to WASM,
+  loaded into a wasmtime instance per template. Cleanest sandbox
+  story (capability-based, no filesystem / network by default).
+- **Deno embed** — easier to author for (most upstream templates
+  are JavaScript), but Deno's "secure-by-default" still gives the
+  embedded code wide capability and pulls in a bigger runtime.
+
+**Concrete plan when picked up:**
+1. New `Template.code: Option<CodeBlock>` field (script + language).
+2. New `src/code_runner.rs` with `run_code(code: &CodeBlock,
+   step_state: &StepState) -> Result<Vec<Finding>>`.
+3. Sandbox: wasmtime with no WASI host imports — code can only
+   read pre-staged variables and emit findings via a host-imported
+   `emit(json)` callback.
+4. Converter accepts `code:` blocks; runtime dispatches to
+   `code_runner::run_code` after the HTTP path.
+5. CI gate: any code template that calls a non-allowlisted host
+   import is rejected at conversion.
+
+**Estimated effort:** 1.5-2 weeks. Sandbox security needs review.
+
+**KPI delta:** Closing this lifts conversion success from ~95%
+to ~99%+. The remaining ~1% is intentionally-broken templates
+upstream uses for testing.
+
+## HTTP/3 (QUIC) support
+
+**What it is:** Some modern Cloudflare-fronted targets only
+serve HTTP/3 over QUIC (no h2 fallback). cyweb v0.8.7 does h1 +
+h2; h3 isn't reachable today.
+
+**Why deferred:** Requires the `quinn` crate (QUIC reference
+impl) and reqwest's experimental h3 feature, which has been in
+preview for 18+ months. Not as drop-in as the h2 patch.
+
+**Concrete plan when picked up:**
+1. Add `reqwest` feature `http3` (currently behind a `--cfg
+   reqwest_unstable` flag — needs RUSTFLAGS in CI).
+2. Extend `--http-version` to accept `3` / `h3`.
+3. `Client::builder().http3_prior_knowledge()` when the operator
+   forces h3.
+4. Smoke test against a known h3-only endpoint (cloudflare-quic.com
+   or similar).
+
+**Estimated effort:** 4-6 hours, mostly CI plumbing for the
+unstable feature flag.
+
+## GraphQL active fuzzing
+
+**What it is:** ZAP and Burp both have GraphQL-aware modes:
+introspect the schema, mutate queries by depth / type / batch
+size, probe for IDOR / authz bypass / DoS via deep nesting.
+cyweb's `fuzz.rs` doesn't know what GraphQL is.
+
+**Why deferred:** Distinct enough surface area that bolting it
+into the existing fuzzer is the wrong shape. Wants its own
+module.
+
+**Concrete plan when picked up:**
+1. New `src/graphql.rs` — introspection client, query mutator,
+   batch / nesting / alias-rename probes.
+2. New CLI flag `--graphql` triggers GraphQL phase after the
+   server fingerprinting phase IF `__schema` returns a result
+   at any of `/graphql`, `/api/graphql`, `/v1/graphql`.
+3. Findings tagged `vuln_class: webservice` so the v0.8.6
+   tuning surface picks them up.
+
+**Estimated effort:** 3-5 days. Schema-driven fuzzing is well-
+understood; the time goes into building a useful payload set,
+not into infrastructure.
