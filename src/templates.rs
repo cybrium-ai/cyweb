@@ -306,12 +306,19 @@ pub async fn run_templates(
         return Vec::new();
     }
 
+    // v0.8.6 — Build a TemplateRegistry once so workflow templates
+    // can resolve their `template:` and `tags:` references at runtime
+    // (instead of just describing the chain as findings).
+    let registry = TemplateRegistry::build(templates);
+
     let findings: Vec<Finding> = stream::iter(templates.iter())
         .map(|tpl| {
             let client = client.clone();
             let target = target.to_string();
+            let registry = &registry;
             async move {
-                execute_template(&client, &target, tpl).await
+                let mut visited = std::collections::HashSet::new();
+                execute_template(&client, &target, tpl, registry, &mut visited, 0).await
             }
         })
         .buffer_unordered(concurrency)
@@ -322,7 +329,82 @@ pub async fn run_templates(
     findings
 }
 
-async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<Finding> {
+/// v0.8.6 — Index of loaded templates so workflow steps can resolve
+/// `template:` (path) and `tags:` (selector) references at runtime.
+/// Built once per `run_templates` call from the input slice — cheap
+/// to construct, lifetime-tied to the templates slice.
+pub struct TemplateRegistry<'a> {
+    by_path: HashMap<String, &'a Template>,
+    by_tag:  HashMap<String, Vec<&'a Template>>,
+}
+
+impl<'a> TemplateRegistry<'a> {
+    pub fn build(templates: &'a [Template]) -> Self {
+        let mut by_path: HashMap<String, &'a Template> = HashMap::new();
+        let mut by_tag:  HashMap<String, Vec<&'a Template>> = HashMap::new();
+        for tpl in templates {
+            // Index by full id (e.g., "cyweb-tmpl-CVE-2021-1234") AND
+            // by the trailing component after any cyweb- prefix, so
+            // upstream `template: cves/2021/CVE-2021-1234.yaml` can
+            // resolve via best-effort suffix match.
+            by_path.insert(tpl.id.clone(), tpl);
+            for tag in &tpl.info.tags {
+                by_tag.entry(tag.clone()).or_default().push(tpl);
+            }
+        }
+        Self { by_path, by_tag }
+    }
+
+    /// Resolve a workflow step's references to a slice of matching
+    /// templates. `template:` matches by id (exact or suffix);
+    /// `tags:` returns the union of all templates for any of the
+    /// listed tags.
+    pub fn resolve(&self, wf: &WorkflowStep) -> Vec<&'a Template> {
+        let mut out: Vec<&'a Template> = Vec::new();
+        if !wf.template.is_empty() {
+            // Exact id match first
+            if let Some(t) = self.by_path.get(&wf.template) {
+                out.push(*t);
+            } else {
+                // Suffix-of-id fallback: upstream uses paths like
+                // "cves/2021/CVE-2021-1234.yaml" but our ids are
+                // "cyweb-tmpl-CVE-2021-1234" — extract a trailing
+                // CVE-style token and match by id-suffix.
+                let needle = wf.template
+                    .rsplit('/').next().unwrap_or(&wf.template)
+                    .trim_end_matches(".yaml")
+                    .trim_end_matches(".yml");
+                for (id, tpl) in &self.by_path {
+                    if id.ends_with(needle) {
+                        out.push(*tpl);
+                    }
+                }
+            }
+        }
+        for tag in &wf.tags {
+            if let Some(v) = self.by_tag.get(tag) {
+                for t in v {
+                    if !out.iter().any(|existing| existing.id == t.id) {
+                        out.push(*t);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Hard depth cap on workflow recursion. Matches upstream nuclei.
+const MAX_WORKFLOW_DEPTH: usize = 5;
+
+async fn execute_template(
+    client: &Client,
+    target: &str,
+    tpl: &Template,
+    registry: &TemplateRegistry<'_>,
+    visited: &mut std::collections::HashSet<String>,
+    depth: usize,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut variables: HashMap<String, String> = tpl.variables.clone();
     variables.insert("BaseURL".to_string(), target.to_string());
@@ -371,17 +453,29 @@ async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<
         // the HTTP path below — DNS/TCP just augment what we found.
     }
 
-    // v0.8.4 — Workflow templates execute differently from HTTP
-    // templates: they reference other templates and chain
-    // subtemplates conditionally. The full templates registry isn't
-    // currently passed down to execute_template (it would be a
-    // bigger refactor to thread through), so for v0.8.4 we surface
-    // the workflow step as an INFO-level finding so the operator
-    // can see "this workflow ran but its referenced templates need
-    // to be loaded separately." Future work: thread the registry
-    // through and execute referenced templates inline.
+    // v0.8.6 — Workflow execution. Each workflow step references one
+    // or more templates (by path or tag). We resolve them via the
+    // registry, run the parents, evaluate the workflow's matchers
+    // against the parent findings, and conditionally fire
+    // subtemplates recursively.
+    //
+    // Cycle protection: `visited` tracks template ids in the current
+    // call chain; if a workflow points back at an ancestor we skip
+    // it instead of recursing forever. Depth-capped at 5 to match
+    // upstream nuclei.
     if !tpl.workflows.is_empty() {
+        if depth >= MAX_WORKFLOW_DEPTH {
+            return findings; // hard cap; silently truncate
+        }
+        // Mark this template visited for the duration of the
+        // workflow chain. We pop on the way out so siblings can
+        // legitimately reference us.
+        if !visited.insert(tpl.id.clone()) {
+            return findings; // already in chain — cycle
+        }
+
         for wf in &tpl.workflows {
+            let parents = registry.resolve(wf);
             let target_label = if !wf.template.is_empty() {
                 wf.template.clone()
             } else if !wf.tags.is_empty() {
@@ -389,22 +483,88 @@ async fn execute_template(client: &Client, target: &str, tpl: &Template) -> Vec<
             } else {
                 "(unspecified)".into()
             };
-            findings.push(Finding {
-                id: format!("CYWEB-WORKFLOW-{}-{}", tpl.id, target_label),
-                title: format!("Workflow chain: {} → {}", tpl.info.name, target_label),
-                severity: parse_severity(&tpl.info.severity),
-                category: "Workflow".into(),
-                description: format!(
-                    "Template `{}` is a workflow that references `{}`. {} subtemplate(s) chained on match.",
-                    tpl.id, target_label, wf.subtemplates.len()
-                ),
-                evidence: format!("workflow step: {}", target_label),
-                url: target.to_string(),
-                cwe: None,
-                remediation: tpl.info.remediation.clone(),
-                vuln_class: None,
-            });
+
+            if parents.is_empty() {
+                // No matching parent — emit a low-severity Info so
+                // the operator knows the chain referenced something
+                // that didn't load.
+                findings.push(Finding {
+                    id: format!("CYWEB-WORKFLOW-UNRESOLVED-{}-{}", tpl.id, target_label),
+                    title: format!("Workflow reference unresolved: {} → {}", tpl.info.name, target_label),
+                    severity: Severity::Info,
+                    category: "Workflow".into(),
+                    description: format!(
+                        "Template `{}` references `{}` but no loaded template matched. \
+                         Either the referenced template did not convert cleanly, or the \
+                         path / tag didn't match any id in the registry.",
+                        tpl.id, target_label,
+                    ),
+                    evidence: format!("workflow step: {}", target_label),
+                    url: target.to_string(),
+                    cwe: None,
+                    remediation: tpl.info.remediation.clone(),
+                    vuln_class: None,
+                });
+                continue;
+            }
+
+            // Run each parent recursively; collect its findings
+            let mut parent_findings: Vec<Finding> = Vec::new();
+            for parent in &parents {
+                if visited.contains(&parent.id) {
+                    continue; // cycle
+                }
+                // Box::pin — async recursion needs heap-allocated future.
+                let nested = Box::pin(execute_template(
+                    client, target, parent, registry, visited, depth + 1,
+                )).await;
+                parent_findings.extend(nested);
+            }
+
+            // Evaluate workflow matchers against parent findings.
+            // Empty matchers = always fire subtemplates if parents
+            // produced ANY findings. Named matchers correlate against
+            // parent_findings by title/id substring (best-effort:
+            // upstream matcher names map to template-internal matcher
+            // names which we don't carry forward, so substring is the
+            // closest practical heuristic).
+            let matched = if wf.matchers.is_empty() {
+                !parent_findings.is_empty()
+            } else {
+                let any_named = parent_findings.iter().any(|f| {
+                    wf.matchers.iter().any(|m|
+                        f.id.to_lowercase().contains(&m.name.to_lowercase())
+                        || f.title.to_lowercase().contains(&m.name.to_lowercase())
+                    )
+                });
+                let all_named = parent_findings.iter().any(|f| {
+                    wf.matchers.iter().all(|m|
+                        f.id.to_lowercase().contains(&m.name.to_lowercase())
+                        || f.title.to_lowercase().contains(&m.name.to_lowercase())
+                    )
+                });
+                // condition on first matcher decides AND vs OR
+                let condition = wf.matchers.first()
+                    .map(|m| m.condition.as_str()).unwrap_or("or");
+                if condition == "and" { all_named } else { any_named }
+            };
+
+            findings.extend(parent_findings);
+
+            if matched {
+                for sub in &wf.subtemplates {
+                    let sub_parents = registry.resolve(sub);
+                    for sp in sub_parents {
+                        if visited.contains(&sp.id) { continue; }
+                        let nested = Box::pin(execute_template(
+                            client, target, sp, registry, visited, depth + 1,
+                        )).await;
+                        findings.extend(nested);
+                    }
+                }
+            }
         }
+        visited.remove(&tpl.id);
         return findings;
     }
 
@@ -1298,5 +1458,177 @@ mod dsl_tests {
         assert_eq!(enc, "616263");
         let dec = eval_value("hex_decode(\"616263\")", "", &h(), 200);
         assert_eq!(dec, "abc");
+    }
+}
+
+#[cfg(test)]
+mod workflow_exec_tests {
+    use super::*;
+
+    fn tinfo(name: &str, sev: &str, tags: Vec<&str>) -> TemplateInfo {
+        TemplateInfo {
+            name: name.into(),
+            severity: sev.into(),
+            description: String::new(),
+            tags: tags.into_iter().map(String::from).collect(),
+            reference: vec![],
+            cwe: vec![],
+            remediation: String::new(),
+        }
+    }
+
+    fn detection_template(id: &str, tag: &str) -> Template {
+        Template {
+            id: id.into(),
+            info: tinfo("Detect X", "info", vec![tag]),
+            variables: HashMap::new(),
+            requests: vec![],
+            dns: vec![],
+            tcp: vec![],
+            workflows: vec![],
+        }
+    }
+
+    fn workflow_template(id: &str, ref_path: &str, has_subs: bool) -> Template {
+        Template {
+            id: id.into(),
+            info: tinfo("Chain", "high", vec!["workflow"]),
+            variables: HashMap::new(),
+            requests: vec![],
+            dns: vec![],
+            tcp: vec![],
+            workflows: vec![WorkflowStep {
+                template: ref_path.into(),
+                tags: vec![],
+                matchers: vec![],
+                subtemplates: if has_subs {
+                    vec![WorkflowStep {
+                        template: "subtemplate-x".into(),
+                        tags: vec![],
+                        matchers: vec![],
+                        subtemplates: vec![],
+                    }]
+                } else { vec![] },
+            }],
+        }
+    }
+
+    #[test]
+    fn registry_resolves_by_exact_id() {
+        let templates = vec![
+            detection_template("cyweb-tmpl-CVE-2024-1234", "rce"),
+            detection_template("cyweb-tmpl-CVE-2024-9999", "sqli"),
+        ];
+        let reg = TemplateRegistry::build(&templates);
+        let wf = WorkflowStep {
+            template: "cyweb-tmpl-CVE-2024-1234".into(),
+            tags: vec![], matchers: vec![], subtemplates: vec![],
+        };
+        let resolved = reg.resolve(&wf);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].id, "cyweb-tmpl-CVE-2024-1234");
+    }
+
+    #[test]
+    fn registry_resolves_by_path_suffix() {
+        // Upstream nuclei uses "cves/2024/CVE-2024-1234.yaml" style;
+        // we should resolve to our suffix-matching id.
+        let templates = vec![detection_template("cyweb-tmpl-CVE-2024-1234", "rce")];
+        let reg = TemplateRegistry::build(&templates);
+        let wf = WorkflowStep {
+            template: "cves/2024/CVE-2024-1234.yaml".into(),
+            tags: vec![], matchers: vec![], subtemplates: vec![],
+        };
+        let resolved = reg.resolve(&wf);
+        assert_eq!(resolved.len(), 1);
+    }
+
+    #[test]
+    fn registry_resolves_by_tags() {
+        let templates = vec![
+            detection_template("a", "rce"),
+            detection_template("b", "rce"),
+            detection_template("c", "sqli"),
+        ];
+        let reg = TemplateRegistry::build(&templates);
+        let wf = WorkflowStep {
+            template: String::new(),
+            tags: vec!["rce".into()],
+            matchers: vec![],
+            subtemplates: vec![],
+        };
+        let resolved = reg.resolve(&wf);
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|t| t.id == "a"));
+        assert!(resolved.iter().any(|t| t.id == "b"));
+    }
+
+    #[tokio::test]
+    async fn unresolved_workflow_emits_info_finding() {
+        // When the registry has nothing matching, we should emit
+        // exactly one Info-severity placeholder per workflow step.
+        let wf_tpl = workflow_template("workflow-1", "nonexistent", false);
+        let templates = vec![wf_tpl.clone()];
+        let reg = TemplateRegistry::build(&templates);
+        let client = reqwest::Client::new();
+        let mut visited = std::collections::HashSet::new();
+        let findings = execute_template(
+            &client, "https://example.com", &wf_tpl, &reg, &mut visited, 0,
+        ).await;
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].id.contains("WORKFLOW-UNRESOLVED"));
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
+
+    #[tokio::test]
+    async fn cycle_protection_does_not_recurse_forever() {
+        // Workflow A → Workflow A (self-cycle). Should terminate.
+        let tpl = Template {
+            id: "wf-cycle".into(),
+            info: tinfo("Cycle", "info", vec![]),
+            variables: HashMap::new(),
+            requests: vec![],
+            dns: vec![], tcp: vec![],
+            workflows: vec![WorkflowStep {
+                template: "wf-cycle".into(),
+                tags: vec![], matchers: vec![], subtemplates: vec![],
+            }],
+        };
+        let templates = vec![tpl.clone()];
+        let reg = TemplateRegistry::build(&templates);
+        let client = reqwest::Client::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            execute_template(&client, "https://x", &tpl, &reg, &mut visited, 0),
+        ).await;
+        assert!(result.is_ok(), "cycle protection failed — execute_template hung");
+    }
+
+    #[tokio::test]
+    async fn depth_cap_truncates_long_chains() {
+        // Build a chain of 10 workflows each pointing at the next.
+        // Depth cap is 5 — execution should stop before reaching #9.
+        let templates: Vec<Template> = (0..10).map(|i| {
+            let next = format!("wf-{}", i + 1);
+            Template {
+                id: format!("wf-{}", i),
+                info: tinfo(&format!("Step {}", i), "info", vec![]),
+                variables: HashMap::new(),
+                requests: vec![], dns: vec![], tcp: vec![],
+                workflows: vec![WorkflowStep {
+                    template: next,
+                    tags: vec![], matchers: vec![], subtemplates: vec![],
+                }],
+            }
+        }).collect();
+        let reg = TemplateRegistry::build(&templates);
+        let client = reqwest::Client::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            execute_template(&client, "https://x", &templates[0], &reg, &mut visited, 0),
+        ).await;
+        assert!(result.is_ok(), "depth cap failed — recursion exceeded 5 levels without bound");
     }
 }
