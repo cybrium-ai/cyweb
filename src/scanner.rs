@@ -430,6 +430,19 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         all_findings.extend(mixed_findings);
     }
 
+    // Phase 8.7: Vulnerable JS library scan (retire.js DB matching).
+    // Walks every crawled HTML page, extracts <script src=> URLs, and
+    // matches each against bundled retire.js patterns. Emits one
+    // finding per (library, version, advisory) tuple — ZAP rule 10003.
+    if run_phase("retirejs") {
+        eprintln!("{}", "Phase 8.7: Vulnerable JS library scan...".cyan());
+        let retire_findings =
+            signatures::retirejs::check_retirejs(&client, &target, &crawled_urls).await;
+        eprintln!("  {} findings", retire_findings.len());
+        requests_made += retire_findings.len().max(1);
+        all_findings.extend(retire_findings);
+    }
+
     // Phase 9: CVE matching
     eprintln!("{}", "Phase 9: CVE matching...".cyan());
     let cve_findings = signatures::cves::match_cves(&server_info);
