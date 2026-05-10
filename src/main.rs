@@ -34,6 +34,8 @@ mod tuning;
 // v0.8.6 — Session re-login monitor (detects 401/redirect/sentinel,
 // replays auth, retries the request).
 mod session;
+// v0.8.6 — Scripted authentication (multi-step / OAuth2 / SAML).
+mod auth_script;
 // Sprint 76 — modern vuln classes that need Rust runtime extensions.
 // race needs concurrent-burst orchestration; websocket needs a WS client.
 mod race;
@@ -164,6 +166,15 @@ enum Commands {
         /// defaults ("session expired", "please log in", etc.).
         #[arg(long)]
         session_expired_sentinel: Option<String>,
+
+        /// v0.8.6 — YAML scripted authentication (multi-step,
+        /// OAuth2 PKCE, SAML POST, bearer-from-JSON). Mutually
+        /// exclusive with --login-user/--login-pass; when both are
+        /// supplied, the script runs and {{user}}/{{pass}} are
+        /// pre-populated from the form-login flags. See
+        /// examples/auth/ for working schemas.
+        #[arg(long)]
+        auth_script: Option<String>,
 
         /// Full scan with all 4,500+ rules (slower, more thorough)
         #[arg(long)]
@@ -353,6 +364,7 @@ async fn main() {
             session_max_relogins,
             session_expired_pattern,
             session_expired_sentinel,
+            auth_script,
         } => {
             print_banner();
 
@@ -396,7 +408,64 @@ async fn main() {
                 session_expired_sentinel: session_expired_sentinel.clone(),
             };
 
+            // v0.8.6 — Scripted authentication. Runs before form-login.
+            // When the script succeeds, its captured cookies + apply
+            // headers get merged into ScanConfig so every subsequent
+            // scan request authenticates correctly.
+            if let Some(ref path) = auth_script {
+                eprintln!("{} {}", "Auth script:".cyan(), path);
+                match auth_script::load(path) {
+                    Ok(script) => {
+                        let auth_client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(config.timeout_secs))
+                            .user_agent(&config.user_agent)
+                            .danger_accept_invalid_certs(true)
+                            .cookie_store(true)
+                            .build()
+                            .unwrap();
+                        let result = auth_script::run(
+                            &auth_client,
+                            &script,
+                            login_user.as_deref(),
+                            login_pass.as_deref(),
+                        ).await;
+                        match result {
+                            Ok(art) => {
+                                eprintln!(
+                                    "  {} script `{}` produced {} header(s) and {} cookie pair(s)",
+                                    "OK".green().bold(),
+                                    script.name,
+                                    art.headers.len(),
+                                    art.cookies.matches(';').count() + (if art.cookies.is_empty() { 0 } else { 1 }),
+                                );
+                                if !art.cookies.is_empty() {
+                                    config.auth_cookie = Some(match config.auth_cookie {
+                                        Some(existing) => format!("{existing}; {}", art.cookies),
+                                        None => art.cookies,
+                                    });
+                                }
+                                // Bake apply.headers into custom_headers
+                                // so the scanner attaches them on every
+                                // request.
+                                for (k, v) in art.headers {
+                                    config.custom_headers.push(format!("{}: {}", k, v));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("  {} {}", "FAILED".red().bold(), e);
+                                eprintln!("  Continuing scan without scripted authentication");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} {}", "FAILED".red().bold(), e);
+                        eprintln!("  Continuing scan without scripted authentication");
+                    }
+                }
+            }
+
             // Form-based login: auto-detect login page, submit creds, inject cookies
+            if auth_script.is_none() {
             if let (Some(ref user), Some(ref pass)) = (&login_user, &login_pass) {
                 eprintln!("{}", "Form login: authenticating...".cyan());
                 let login_client = reqwest::Client::builder()
@@ -425,6 +494,7 @@ async fn main() {
                     eprintln!("  Continuing scan without authentication");
                 }
             }
+            } // end auth_script.is_none() guard around form-login
 
             eprintln!(
                 "{} {} (threads={}, timeout={}s)",
