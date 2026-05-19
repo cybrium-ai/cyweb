@@ -169,7 +169,13 @@ pub async fn check_rules(
     concurrency: usize,
     baseline_hash: u64,
 ) -> Vec<Finding> {
-    let findings: Vec<Finding> = stream::iter(rules.iter())
+    // v0.9 — clone-on-iterate so each closure receives an OWNED
+    // `Rule` rather than a borrow. Borrowed `&Rule` makes the inner
+    // future carry a lifetime, which trips a HRTB-FnOnce error when
+    // the outer `run_scan` future is sent across `tokio::spawn`
+    // (e.g. from the GUI's scan-trigger handler). Cloning here costs
+    // a small one-time alloc per rule and unblocks the spawn path.
+    let findings: Vec<Finding> = stream::iter(rules.iter().cloned())
         .map(|rule| {
             let client = client.clone();
             let target = target.to_string();

@@ -425,6 +425,119 @@
     text-align: center; padding: 24px; color: var(--muted); font-size: 12px;
   }
   footer a { color: var(--primary-2); }
+
+  /* ── v0.9 scan-launcher panel ──────────────────────────────────── */
+  .launcher {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin: 18px 0;
+  }
+  .launcher.hidden { display: none; }
+  .launcher h2 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+  .launcher .hint {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 0 0 14px 0;
+  }
+  .launcher .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .launcher .row > input[type="url"],
+  .launcher .row > input[type="text"] {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .launcher .row > input:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
+  .launcher .options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .launcher .opt {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .launcher .opt input[type="checkbox"] { accent-color: var(--primary); margin: 0; }
+  .launcher .opt.active { color: var(--text); border-color: var(--primary); }
+  .launcher .opt select,
+  .launcher .opt input[type="number"] {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 0;
+    width: 50px;
+  }
+  .launcher .opt select:focus,
+  .launcher .opt input[type="number"]:focus { outline: none; }
+  .launcher .actions {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .launcher .status {
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: auto;
+  }
+  .launcher .status.running { color: var(--accent); }
+  .launcher .status.error   { color: var(--sev-high); }
+
+  .progress {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin: 14px 0;
+    display: none;
+    align-items: center;
+    gap: 14px;
+  }
+  .progress.visible { display: flex; }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-text {
+    color: var(--text);
+    font-size: 13px;
+    flex: 1;
+  }
+  .progress-target {
+    color: var(--muted);
+    font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, monospace;
+  }
 </style>
 </head>
 <body>
@@ -445,6 +558,65 @@
 </header>
 
 <main>
+
+  <!-- ─── v0.9 Scan launcher (hidden once a scan has populated results) ── -->
+  <section class="launcher" id="launcher">
+    <h2>Start a scan</h2>
+    <p class="hint">Bound to localhost. Findings appear below as soon as the scan completes.</p>
+    <div class="row">
+      <input id="launch-target" type="url" placeholder="https://example.com" autofocus />
+      <button class="primary" id="launch-btn" onclick="startScan()">Start scan</button>
+    </div>
+    <div class="options">
+      <label class="opt">
+        <input type="checkbox" id="opt-spider" />
+        <span>Spider</span>
+        <select id="opt-spider-depth" title="Spider depth">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+        </select>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="opt-fuzz" />
+        <span>Active fuzzing</span>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="opt-full" />
+        <span>Full scan</span>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="opt-tls" />
+        <span>TLS check</span>
+      </label>
+      <label class="opt">
+        <input type="checkbox" id="opt-redirects" checked />
+        <span>Follow redirects</span>
+      </label>
+      <label class="opt">
+        <span>Threads</span>
+        <input type="number" id="opt-threads" min="1" max="100" value="10" />
+      </label>
+      <label class="opt">
+        <span>Paths</span>
+        <input type="number" id="opt-paths" min="10" max="2000" value="200" />
+      </label>
+      <label class="opt">
+        <span>Timeout (s)</span>
+        <input type="number" id="opt-timeout" min="1" max="120" value="10" />
+      </label>
+    </div>
+    <div class="actions">
+      <span class="status" id="launch-status"></span>
+    </div>
+  </section>
+
+  <!-- Scan-in-progress indicator. Replaces the launcher while a scan runs. -->
+  <section class="progress" id="progress">
+    <span class="spinner"></span>
+    <span class="progress-text">Scan in progress…</span>
+    <span class="progress-target" id="progress-target"></span>
+  </section>
 
   <div class="tiles" id="tiles"></div>
 
@@ -813,11 +985,170 @@
     }[ch]));
   }
 
+  /* ── v0.9 — scan-launcher state machine ────────────────────────────
+     Three states:
+       idle      - no scan run yet (or result is the stub). Show launcher
+                   panel, hide the rest of the page chrome.
+       running   - POST /api/scan returned a scan_id; we're polling
+                   /api/scan/:id every 1.5s. Show progress card.
+       complete  - scan finished. Hide launcher/progress; render results.
+     The page only ever holds ONE active scan at a time. Starting a
+     new one replaces the previous result (which the backend still
+     keeps in /api/scans for history).                              */
+  let CURRENT_SCAN_ID = null;
+  let POLL_TIMER      = null;
+
+  function setLauncherStatus(text, kind) {
+    const el = document.getElementById('launch-status');
+    el.textContent = text || '';
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  async function startScan() {
+    const target = document.getElementById('launch-target').value.trim();
+    if (!target) {
+      setLauncherStatus('Target is required', 'error');
+      return;
+    }
+    const body = {
+      target,
+      spider:           document.getElementById('opt-spider').checked,
+      spider_depth:     Number(document.getElementById('opt-spider-depth').value),
+      fuzz:             document.getElementById('opt-fuzz').checked,
+      full:             document.getElementById('opt-full').checked,
+      tls_check:        document.getElementById('opt-tls').checked,
+      follow_redirects: document.getElementById('opt-redirects').checked,
+      threads:          Number(document.getElementById('opt-threads').value),
+      max_paths:        Number(document.getElementById('opt-paths').value),
+      timeout:          Number(document.getElementById('opt-timeout').value),
+    };
+    document.getElementById('launch-btn').disabled = true;
+    setLauncherStatus('Starting…', 'running');
+
+    let resp;
+    try {
+      resp = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+    } catch (e) {
+      document.getElementById('launch-btn').disabled = false;
+      setLauncherStatus('Network error: ' + e, 'error');
+      return;
+    }
+    if (!resp.ok) {
+      document.getElementById('launch-btn').disabled = false;
+      setLauncherStatus('Server rejected: HTTP ' + resp.status, 'error');
+      return;
+    }
+    const j = await resp.json();
+    CURRENT_SCAN_ID = j.scan_id;
+    // Transition: hide launcher, show progress.
+    document.getElementById('launcher').classList.add('hidden');
+    const prog = document.getElementById('progress');
+    prog.classList.add('visible');
+    document.getElementById('progress-target').textContent = j.target;
+    pollCurrentScan();
+  }
+
+  async function pollCurrentScan() {
+    if (!CURRENT_SCAN_ID) return;
+    try {
+      const r = await fetch('/api/scan/' + encodeURIComponent(CURRENT_SCAN_ID));
+      if (r.ok) {
+        const wrap = await r.json();
+        const state = wrap.state;
+        if (state.status === 'completed') {
+          // Result lives on the registry; the existing UI fetches the
+          // latest "active" result through /api/result. We patch DATA
+          // directly so the page doesn't need a backend round-trip.
+          onScanCompleted(state.result);
+          return;
+        }
+        if (state.status === 'failed') {
+          document.getElementById('progress').classList.remove('visible');
+          document.getElementById('launcher').classList.remove('hidden');
+          document.getElementById('launch-btn').disabled = false;
+          setLauncherStatus('Scan failed: ' + (state.error || 'unknown'), 'error');
+          CURRENT_SCAN_ID = null;
+          return;
+        }
+        // Still running — keep polling.
+      }
+    } catch (e) {
+      // Network hiccup — retry next tick.
+    }
+    POLL_TIMER = setTimeout(pollCurrentScan, 1500);
+  }
+
+  function onScanCompleted(result) {
+    // Hide progress, then re-render with the new result.
+    document.getElementById('progress').classList.remove('visible');
+    DATA = result;
+    DATA.spider_nodes = DATA.spider_nodes || [];
+    DATA.http_events  = DATA.http_events  || [];
+    DATA.log_lines    = DATA.log_lines    || [];
+    DATA.rule_stats   = DATA.rule_stats   || [];
+    renderLoadedScan();
+    // Launcher stays hidden; the user can scroll to it via the
+    // header "New scan" link (added below) or refresh the page.
+    document.getElementById('launch-btn').disabled = false;
+    setLauncherStatus('Done — ' + DATA.findings.length + ' findings', '');
+    CURRENT_SCAN_ID = null;
+  }
+
+  function renderLoadedScan() {
+    document.getElementById('target-host').textContent = DATA.target;
+    const dur = (DATA.duration_ms / 1000).toFixed(1);
+    document.getElementById('scan-meta').textContent =
+      `${DATA.findings.length} alerts · ${DATA.spider_nodes.length} spider nodes · ` +
+      `${DATA.http_events.length} active-scan req · ${dur}s`;
+
+    document.getElementById('b-alerts').textContent = DATA.findings.length;
+    document.getElementById('b-spider').textContent = DATA.spider_nodes.length;
+    document.getElementById('b-active').textContent = DATA.http_events.length;
+    document.getElementById('b-output').textContent = DATA.log_lines.length;
+    document.getElementById('b-asub-msgs').textContent = DATA.http_events.length;
+    document.getElementById('b-asub-rule').textContent = DATA.rule_stats.length;
+
+    document.getElementById('b-sub-urls').textContent  = DATA.spider_nodes.length;
+    const addedNodes = DATA.spider_nodes.filter(n => n.in_scope && n.processed);
+    document.getElementById('b-sub-nodes').textContent = addedNodes.length;
+    document.getElementById('b-sub-msgs').textContent  = addedNodes.length;
+
+    renderTiles();
+    renderSitesTree();
+    renderAlerts();
+    renderSpider();
+    renderNodes();
+    renderMessages();
+    renderActive();
+    renderRules();
+    renderChart();
+    renderOutput();
+    fetchHistory();
+  }
+
   async function load() {
     const res = await fetch('/api/result');
     DATA = await res.json();
     DATA.spider_nodes = DATA.spider_nodes || [];
     DATA.http_events  = DATA.http_events  || [];
+
+    // v0.9 — idle mode detection. When `cyweb gui` starts the server
+    // without a prior scan, the stub result has target "(no scan yet)"
+    // and zero findings. In that case show the launcher and hide
+    // everything else until the user submits a scan.
+    if (DATA.target === '(no scan yet)' || (DATA.findings.length === 0 && DATA.duration_ms === 0)) {
+      // Stay in idle: launcher visible, rest empty.
+      document.getElementById('target-host').textContent = 'cyweb — idle';
+      document.getElementById('scan-meta').textContent = 'awaiting target';
+      return;
+    }
+
+    // Result present: hide launcher, render normally.
+    document.getElementById('launcher').classList.add('hidden');
 
     document.getElementById('target-host').textContent = DATA.target;
     const dur = (DATA.duration_ms / 1000).toFixed(1);

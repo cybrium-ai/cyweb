@@ -31,6 +31,61 @@ cyweb scan https://example.com --spider --spider-depth 3
 cyweb scan https://example.com --threads 20 --timeout 15
 ```
 
+## Web UI (v0.8+)
+
+cyweb ships with a local single-page UI for browsing findings and triggering scans — no separate install, no external dependencies. The server binds to `127.0.0.1` only (no auth, no TLS) and is meant for an operator on their own machine.
+
+### Post-scan view (`--gui` flag, v0.8+)
+
+Append `--gui` to a `cyweb scan` invocation. Once the scan completes, cyweb starts a local web server and prints a URL:
+
+```bash
+cyweb scan https://example.com --gui
+
+# Optional: override the default port (8990)
+cyweb scan https://example.com --gui --gui-port 9000
+```
+
+The UI shows:
+- Severity tiles (critical / high / medium / low / info counts)
+- Searchable, filterable findings table with per-row detail panel
+- Spider tree (URLs the crawler observed)
+- Active-scan request log (when `--fuzz` was enabled)
+- Output log (every phase line, timestamped + searchable)
+- Exports: JSON · CSV · Markdown · HTML · SARIF · XML
+
+The server keeps running until Ctrl-C — refilter, re-export, replay individual requests without re-scanning.
+
+### Trigger-scan view (`cyweb gui`, v0.9+)
+
+Launch the UI **before** running a scan. The page opens in idle mode with a target-URL input and options form; click **Start scan** and the page polls progress until findings render in the same table the `--gui` flag produces.
+
+```bash
+cyweb gui
+
+# Optional: override the default port (8990)
+cyweb gui --port 9000
+
+# Then open http://127.0.0.1:8990 in your browser.
+```
+
+Options exposed in the launcher form:
+- Spider (with depth selector)
+- Active fuzzing
+- Full scan mode
+- TLS check
+- Follow redirects
+- Threads / max paths / timeout
+
+Same UI, same exports — just launched from the browser instead of the shell. Useful for demos, OSS users who prefer a UI over flags, and operators who want a stand-alone scanner without spinning up the full Cybrium platform.
+
+API endpoints (same server, useful for scripting):
+- `POST /api/scan` — start a scan; body: `{"target": "https://example.com", ...options}`. Returns `{scan_id, status: "running", target}`.
+- `GET  /api/scan/:scan_id` — current state. Returns `{scan_id, state: {status: "running" | "completed" | "failed", result?, error?}}`.
+- `GET  /api/scans` — list every scan in this session.
+- `GET  /api/result` — latest active result (legacy `--gui` mode).
+- `GET  /api/export.{json,csv,markdown,html,sarif,xml}` — download the latest result.
+
 ## What it checks
 
 ### Security Headers

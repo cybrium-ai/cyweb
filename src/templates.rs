@@ -327,14 +327,20 @@ pub async fn run_templates(
     // (instead of just describing the chain as findings).
     let registry = TemplateRegistry::build(templates);
 
-    let findings: Vec<Finding> = stream::iter(templates.iter())
+    // v0.9 — clone-on-iterate + own the registry inside each closure
+    // so neither `tpl` nor `registry` borrows escape the future. The
+    // borrowed-Registry version made the run_scan future non-`Send`
+    // for `tokio::spawn`, which broke the GUI's POST /api/scan path.
+    // Registry is an Arc-cheap clone, Template clone is small.
+    let registry_owned = registry.clone();
+    let findings: Vec<Finding> = stream::iter(templates.iter().cloned())
         .map(|tpl| {
             let client = client.clone();
             let target = target.to_string();
-            let registry = &registry;
+            let registry = registry_owned.clone();
             async move {
                 let mut visited = std::collections::HashSet::new();
-                execute_template(&client, &target, tpl, registry, &mut visited, 0).await
+                execute_template(&client, &target, &tpl, &registry, &mut visited, 0).await
             }
         })
         .buffer_unordered(concurrency)
@@ -349,6 +355,7 @@ pub async fn run_templates(
 /// `template:` (path) and `tags:` (selector) references at runtime.
 /// Built once per `run_templates` call from the input slice — cheap
 /// to construct, lifetime-tied to the templates slice.
+#[derive(Clone)]
 pub struct TemplateRegistry<'a> {
     by_path: HashMap<String, &'a Template>,
     by_tag:  HashMap<String, Vec<&'a Template>>,

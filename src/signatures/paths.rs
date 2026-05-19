@@ -225,7 +225,11 @@ pub async fn check_paths(
     // Step 1: Establish baseline for soft-404 detection
     let (baseline_hash, baseline_len) = get_baseline(client, target).await;
 
-    let checks: Vec<&PathCheck> = PATHS.iter().take(max_paths).collect();
+    // v0.9 — collect by-clone (owned `PathCheck`) so the closure
+    // doesn't carry a lifetime to `PATHS`. Same reason as rules.rs:
+    // borrowed iterator items break `tokio::spawn` HRTB inference
+    // when the run_scan future is sent across the spawn boundary.
+    let checks: Vec<PathCheck> = PATHS.iter().take(max_paths).cloned().collect();
     let total = checks.len();
 
     let findings: Vec<Finding> = stream::iter(checks)

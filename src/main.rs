@@ -327,6 +327,20 @@ enum Commands {
     /// Detection only — feeds scanner-identity and tamper-detection
     /// flows. JSON output: {kind, vendor, present}.
     Rot,
+
+    /// v0.9 — Launch the local web UI without running a scan first.
+    /// The browser shows a target input + options form; clicking
+    /// "Start scan" posts to `/api/scan` and the page polls progress
+    /// until the scan completes, then renders findings in the same
+    /// table the `--gui` flag produces. Useful for OSS users who
+    /// prefer a UI over CLI flags, and for demos.
+    ///
+    /// Bound to 127.0.0.1 — no auth, no TLS. Stop with Ctrl-C.
+    Gui {
+        /// Port for the local web UI.
+        #[arg(long, default_value = "8990")]
+        port: u16,
+    },
 }
 
 #[tokio::main]
@@ -834,6 +848,14 @@ async fn main() {
             match serde_json::to_string_pretty(&r) {
                 Ok(j)  => println!("{j}"),
                 Err(e) => eprintln!("error serialising root-of-trust: {e}"),
+            }
+        }
+
+        Commands::Gui { port } => {
+            print_banner();
+            if let Err(e) = gui::start_server_idle(port).await {
+                eprintln!("\n{} {}", "GUI server failed:".red(), e);
+                std::process::exit(1);
             }
         }
     }
