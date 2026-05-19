@@ -814,14 +814,13 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     if run_phase("templates") {
         let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
         if !tpls.is_empty() {
-            eprintln!(
-                "{}",
-                format!("Phase 13: Template engine ({} templates)...", tpls.len()).cyan()
-            );
+            // Drop "({} templates)" from banner — count exposes our
+            // template-store size which fingerprints the scanner.
+            eprintln!("{}", "Phase 13: Template engine...".cyan());
             let tpl_findings = crate::templates::run_templates(
                 &client, &target, &tpls, config.threads,
             ).await;
-            eprintln!("  {} findings from templates", tpl_findings.len());
+            eprintln!("  {} findings", tpl_findings.len());
             all_findings.extend(tpl_findings);
         }
     }

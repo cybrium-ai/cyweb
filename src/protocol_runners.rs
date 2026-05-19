@@ -89,7 +89,7 @@ pub async fn run_dns(target: &str, tpl: &Template) -> Vec<Finding> {
         let any_match = step.matchers.iter().any(|m| match_simple(m, &answer_text, &empty_headers, status));
         if any_match {
             findings.push(Finding {
-                id: format!("CYWEB-DNS-{}", tpl.id),
+                id: format!("CYWEB-DNS-{}", tpl.display_id()),
                 title: tpl.info.name.clone(),
                 severity: parse_severity(&tpl.info.severity),
                 category: "DNS".into(),
@@ -131,7 +131,7 @@ pub async fn run_tcp(target: &str, tpl: &Template) -> Vec<Finding> {
         let any_match = step.matchers.iter().any(|m| match_simple(m, &banner, &empty_headers, status));
         if any_match {
             findings.push(Finding {
-                id: format!("CYWEB-TCP-{}", tpl.id),
+                id: format!("CYWEB-TCP-{}", tpl.display_id()),
                 title: tpl.info.name.clone(),
                 severity: parse_severity(&tpl.info.severity),
                 category: "TCP Service".into(),
@@ -206,7 +206,7 @@ pub async fn run_headless(target: &str, tpl: &Template) -> Vec<Finding> {
             let any_match = step.matchers.iter().any(|m| match_simple(m, &body, &empty_headers, 200));
             if any_match {
                 findings.push(Finding {
-                    id: format!("CYWEB-HEADLESS-{}", tpl.id),
+                    id: format!("CYWEB-HEADLESS-{}", tpl.display_id()),
                     title: tpl.info.name.clone(),
                     severity: parse_severity(&tpl.info.severity),
                     category: "Headless DOM".into(),

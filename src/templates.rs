@@ -40,6 +40,20 @@ pub struct Template {
     pub workflows: Vec<WorkflowStep>,
 }
 
+impl Template {
+    /// Returns the template ID with any legacy third-party-converter
+    /// prefix stripped, suitable for user-facing display (reports,
+    /// CLI output). Templates converted by an older `cyweb
+    /// convert-nuclei` flow carry a "nuclei-" prefix in their `id`
+    /// field; emitting that string in user-visible output leaks the
+    /// upstream tool name. The on-disk storage keeps the raw `id`
+    /// (we don't rewrite the disk format); display sites must call
+    /// this helper instead of touching `self.id` directly.
+    pub fn display_id(&self) -> &str {
+        self.id.strip_prefix("nuclei-").unwrap_or(&self.id)
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct WorkflowStep {
     /// Path to a referenced template, relative to the templates
@@ -251,10 +265,12 @@ pub fn load_templates(extra_dir: Option<&str>) -> Vec<Template> {
     }
 
     if !sources.is_empty() {
-        eprintln!("  Loaded {} templates from:", templates.len());
-        for (src, count) in &sources {
-            eprintln!("    - {}  ({} templates)", src, count);
-        }
+        // Per Cybrium UI security rule: never leak template counts or
+        // local paths to scan output. The count + per-source breakdown
+        // exposes our internal template-store size and on-disk layout,
+        // which lets adversaries fingerprint the scanner. Aggregate
+        // findings count is still surfaced at the phase summary.
+        eprintln!("  {}", "Template engine ready".to_string());
     }
 
     templates
@@ -489,7 +505,7 @@ async fn execute_template(
                 // the operator knows the chain referenced something
                 // that didn't load.
                 findings.push(Finding {
-                    id: format!("CYWEB-WORKFLOW-UNRESOLVED-{}-{}", tpl.id, target_label),
+                    id: format!("CYWEB-WORKFLOW-UNRESOLVED-{}-{}", tpl.display_id(), target_label),
                     title: format!("Workflow reference unresolved: {} → {}", tpl.info.name, target_label),
                     severity: Severity::Info,
                     category: "Workflow".into(),
@@ -497,7 +513,7 @@ async fn execute_template(
                         "Template `{}` references `{}` but no loaded template matched. \
                          Either the referenced template did not convert cleanly, or the \
                          path / tag didn't match any id in the registry.",
-                        tpl.id, target_label,
+                        tpl.display_id(), target_label,
                     ),
                     evidence: format!("workflow step: {}", target_label),
                     url: target.to_string(),
@@ -636,7 +652,7 @@ async fn execute_template(
                 let evidence = build_evidence(&step.matchers, &resp_body, &resp_headers, status);
 
                 findings.push(Finding {
-                    id: format!("{}-step{}", tpl.id, step_idx),
+                    id: format!("{}-step{}", tpl.display_id(), step_idx),
                     title: tpl.info.name.clone(),
                     severity: parse_severity(&tpl.info.severity),
                     category: tpl.info.tags.first().cloned().unwrap_or_else(|| "template".into()),
@@ -648,12 +664,12 @@ async fn execute_template(
                     vuln_class: None,
                 });
 
-                eprintln!(
-                    "  {} {} — {}",
-                    "MATCH".green().bold(),
-                    tpl.id.yellow(),
-                    tpl.info.name,
-                );
+                // Per-template MATCH printout suppressed: tpl.id may
+                // carry a third-party prefix (e.g. "nuclei-") from
+                // older conversions, and tpl.info.name often contains
+                // the targeted vendor/product. Both leak adversary-
+                // relevant intel about our scanner library. Aggregate
+                // count is printed by the phase caller.
             }
         }
     }
@@ -666,7 +682,7 @@ async fn execute_template(
         let callbacks = crate::interactsh::poll_callbacks(client, &token).await;
         for cb in callbacks {
             findings.push(Finding {
-                id: format!("CYWEB-OAST-{}", tpl.id),
+                id: format!("CYWEB-OAST-{}", tpl.display_id()),
                 title: format!("Out-of-band interaction confirmed: {}", tpl.info.name),
                 severity: Severity::High,
                 category: "Blind Interaction (OAST)".into(),
