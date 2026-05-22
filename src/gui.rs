@@ -138,6 +138,8 @@ pub async fn start_server_idle(port: u16) -> std::io::Result<()> {
         http_events: Vec::new(),
         log_lines: Vec::new(),
         rule_stats: Vec::new(),
+        incomplete: false,
+        stopped_phase: None,
     };
     start_server_inner(stub, port, None).await
 }
@@ -165,6 +167,8 @@ pub async fn start_server_proxy(
         http_events: Vec::new(),
         log_lines: Vec::new(),
         rule_stats: Vec::new(),
+        incomplete: false,
+        stopped_phase: None,
     };
     start_server_inner(stub, port, Some(proxy_events)).await
 }
@@ -633,5 +637,12 @@ fn scan_config_from_request(req: &ScanRequest, target: &str) -> ScanConfig {
         login_user: None,
         login_pass: None,
         login_url_explicit: None,
+        // v0.10 — GUI uses cyweb defaults (unlimited duration, all
+        // templates, Phase 13 enabled). Operators wanting scoped fast
+        // scans should use the CLI directly with --max-duration /
+        // --templates-include / --skip-templates.
+        max_duration_secs: None,
+        templates_include: Vec::new(),
+        skip_templates: false,
     }
 }

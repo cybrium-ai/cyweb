@@ -31,6 +31,38 @@ cyweb scan https://example.com --spider --spider-depth 3
 cyweb scan https://example.com --threads 20 --timeout 15
 ```
 
+### Scoped fast scans (v0.10+)
+
+cyweb's Phase 13 template engine iterates 9,000+ YAML templates against the
+target and can take 1–3 hours on a real-world site. For CI scans + per-MITRE-
+technique workflows that need ~30–120s scans, v0.10 adds the surface to
+scope and bound a run:
+
+```bash
+# Skip Phase 13 entirely (Phases 1-12 only — ~5 min on a real target)
+cyweb scan https://example.com --skip-templates --output jsonl
+
+# Hard time limit. On expiry: stop, flush whatever's been found, exit 0.
+# The output sets `"incomplete": true` + `"stopped_phase": <name>`.
+cyweb scan https://example.com --max-duration 60 --output jsonl
+
+# Per-tag template scoping. Same contract as the old `nuclei -tags` flag —
+# only templates whose info.tags matches at least one of the comma-separated
+# substrings will run. Perfect for per-technique adversary scans.
+cyweb scan https://example.com --templates-include "xss,sqli,ssti" --output jsonl
+
+# All three compose. Adversary-engine-style scoped probe:
+cyweb scan https://example.com \
+    --templates-include "xss,sqli,ssti,injection,lfi" \
+    --max-duration 90 \
+    --output jsonl
+```
+
+JSONL output emits one self-contained JSON object per line — each finding +
+a final `{"type":"scan_complete",...}` event with summary stats. Plays
+cleanly with `jq`, OpenSearch ingest, and the Cybrium platform's finding
+ingestor.
+
 ## Web UI (v0.8+)
 
 cyweb ships with a local single-page UI for browsing findings and triggering scans — no separate install, no external dependencies. The server binds to `127.0.0.1` only (no auth, no TLS) and is meant for an operator on their own machine.

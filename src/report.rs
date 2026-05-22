@@ -59,6 +59,53 @@ pub fn to_json(result: &ScanResult) -> String {
     serde_json::to_string_pretty(result).unwrap_or_else(|_| "{}".into())
 }
 
+/// v0.10 (#27) — JSONL output. One self-contained JSON object per line:
+///   * one "finding" event per finding
+///   * one final "scan_complete" event with summary stats + the
+///     `incomplete` / `stopped_phase` markers that --max-duration sets
+///
+/// Streaming-as-discovered emission (each event flushed when generated
+/// rather than buffered) is tracked for v0.11 — this v0.10 implementation
+/// emits the same shape as a single batch at the end of `run_scan`. The
+/// shape is compatible with downstream `jq`, OpenSearch, the Cybrium
+/// platform's finding ingestor, and any other line-oriented consumer.
+pub fn to_jsonl(result: &ScanResult) -> String {
+    let mut out = String::new();
+    for f in &result.findings {
+        let row = serde_json::json!({
+            "type":        "finding",
+            "id":          f.id,
+            "title":       f.title,
+            "severity":    f.severity.to_string().to_lowercase(),
+            "category":    f.category,
+            "url":         f.url,
+            "evidence":    f.evidence,
+            "description": f.description,
+            "remediation": f.remediation,
+            "cwe":         f.cwe,
+            "vuln_class":  f.vuln_class,
+        });
+        out.push_str(&serde_json::to_string(&row).unwrap_or_else(|_| "{}".into()));
+        out.push('\n');
+    }
+    let summary = serde_json::json!({
+        "type":            "scan_complete",
+        "target":          result.target,
+        "duration_ms":     result.duration_ms,
+        "total_findings":  result.summary.total,
+        "critical":        result.summary.critical,
+        "high":            result.summary.high,
+        "medium":          result.summary.medium,
+        "low":             result.summary.low,
+        "info":            result.summary.info,
+        "incomplete":      result.incomplete,
+        "stopped_phase":   result.stopped_phase,
+    });
+    out.push_str(&serde_json::to_string(&summary).unwrap_or_else(|_| "{}".into()));
+    out.push('\n');
+    out
+}
+
 /// SARIF 2.1.0 output — compatible with GitHub, Azure DevOps, Cybrium platform.
 pub fn to_sarif(result: &ScanResult) -> String {
     let rules: Vec<serde_json::Value> = result

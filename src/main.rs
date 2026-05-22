@@ -275,6 +275,35 @@ enum Commands {
         /// but discovers routes that only appear after JS executes.
         #[arg(long)]
         ajax_spider: bool,
+
+        /// v0.10 (#26) — Hard upper bound on total scan runtime in
+        /// seconds. When the deadline expires the current phase finishes
+        /// its in-flight request, the rest are skipped, and the partial
+        /// findings get emitted normally (the JSON / JSONL output carries
+        /// `"incomplete": true` + the `"stopped_phase"` name). 0 = no
+        /// limit (default — legacy behaviour). Pairs cleanly with
+        /// `--output jsonl` for CI-style fast scans.
+        #[arg(long, default_value = "0")]
+        max_duration: u64,
+
+        /// v0.10 (#25) — Per-tag template filter for Phase 13. Same
+        /// contract as the old `nuclei -tags xss,sqli,ssti` flag: only
+        /// templates whose `info.tags` field contains at least one of
+        /// the comma-separated substrings (case-insensitive) will run.
+        /// Empty (default) runs the full template set. Composes with
+        /// `--tuning` (which gates phases) and `--skip-templates` (which
+        /// skips Phase 13 entirely).
+        #[arg(long)]
+        templates_include: Option<String>,
+
+        /// v0.10 (#28) — Skip Phase 13 (template engine) entirely.
+        /// Convenience for CI / Adversary Engine reconnaissance scans
+        /// where Phases 1-12 (5-min budget) produce ~10 findings against
+        /// a real target and Phase 13's 9,878-template enumeration would
+        /// otherwise add 1-3 hours. Equivalent to excluding `templates`
+        /// from `--tuning`.
+        #[arg(long)]
+        skip_templates: bool,
     },
     /// Update signature rules from GitHub
     UpdateRules,
@@ -404,6 +433,10 @@ async fn main() {
             http_version,
             strength,
             threshold,
+            // v0.10 (#25, #26, #28) — new CLI surface for scoped fast scans.
+            max_duration,
+            templates_include,
+            skip_templates,
         } => {
             print_banner();
 
@@ -454,6 +487,13 @@ async fn main() {
                 login_user: if auth_script.is_none() { login_user.clone() } else { None },
                 login_pass: if auth_script.is_none() { login_pass.clone() } else { None },
                 login_url_explicit: if auth_script.is_none() { login_url.clone() } else { None },
+                // v0.10 — scoped fast-scan surface
+                max_duration_secs: if max_duration == 0 { None } else { Some(max_duration) },
+                templates_include: templates_include
+                    .as_deref()
+                    .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+                    .unwrap_or_default(),
+                skip_templates,
             };
 
             // v0.8.6 — Scripted authentication. Runs before form-login.
@@ -563,6 +603,20 @@ async fn main() {
                         eprintln!("\n{} {}", "Report written to".green(), path);
                     } else {
                         println!("{json}");
+                    }
+                }
+                "jsonl" | "ndjson" => {
+                    // v0.10 (#27) — Newline-delimited JSON. One finding per
+                    // line + a terminating "scan_complete" event line. The
+                    // shape matches what `jq`, OpenSearch ingest, and the
+                    // Cybrium platform's finding ingestor expect from
+                    // line-oriented streams.
+                    let jsonl = report::to_jsonl(&result);
+                    if let Some(path) = &file {
+                        std::fs::write(path, &jsonl).expect("Failed to write output file");
+                        eprintln!("\n{} {}", "JSONL report written to".green(), path);
+                    } else {
+                        print!("{jsonl}");
                     }
                 }
                 "sarif" => {
