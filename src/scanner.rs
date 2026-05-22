@@ -72,6 +72,21 @@ pub struct ScanConfig {
     pub login_user: Option<String>,
     pub login_pass: Option<String>,
     pub login_url_explicit: Option<String>,
+    /// v0.10 (#26) — Hard upper bound on total scan runtime in seconds.
+    /// When the deadline expires the current phase finishes its in-flight
+    /// request, the remaining phases are skipped, and the partial findings
+    /// are emitted normally with `ScanResult.incomplete = true`. `None`
+    /// means unlimited (legacy behaviour).
+    pub max_duration_secs: Option<u64>,
+    /// v0.10 (#25) — Comma-separated template tag substrings. Only YAML
+    /// templates whose `info.tags` contains at least one substring match
+    /// will run during Phase 13. Empty Vec = run all templates (legacy).
+    /// Same contract as the old `nuclei -tags xss,sqli,ssti` flag.
+    pub templates_include: Vec<String>,
+    /// v0.10 (#28) — Convenience for "skip Phase 13". Equivalent to
+    /// excluding the `templates` phase from --tuning, but easier for
+    /// CI-style fast scans.
+    pub skip_templates: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -108,6 +123,18 @@ pub struct ScanResult {
     /// produced no traffic.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_stats: Vec<RuleStat>,
+    /// v0.10 (#26) — True when the scan terminated via `--max-duration`
+    /// rather than completing all configured phases. Findings emitted up
+    /// to the deadline are still in `findings`; downstream callers
+    /// (e.g. the Cybrium Adversary Engine) use this flag to distinguish
+    /// "scan ran clean to completion" from "scan was cut short — partial
+    /// signal only".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
+    /// v0.10 (#26) — Last phase name that was running (or about to run)
+    /// when the deadline expired. None on a complete scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_phase: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -470,7 +497,27 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             tuning_sel.unknown.join(", "),
         );
     }
-    let run_phase = |phase: &str| -> bool { tuning_sel.run_phase(phase) };
+    // v0.10 (#26) — Deadline tracking. Phases gate on BOTH tuning and the
+    // max-duration check. When the deadline expires the first phase to
+    // notice records its name as `stopped_phase` and every subsequent phase
+    // short-circuits to keep the partial result coherent.
+    let deadline_state = DeadlineState::new(start, config.max_duration_secs);
+    if let Some(d) = config.max_duration_secs {
+        eprintln!("  {} {}s", "Max duration:".dimmed(), d);
+    }
+    // v0.10 (#28) — --skip-templates is a CLI convenience that excludes
+    // the Phase 13 template engine from the tuning selection without the
+    // operator having to enumerate every OTHER phase explicitly.
+    let skip_templates = config.skip_templates;
+    let run_phase = |phase: &str| -> bool {
+        if !deadline_state.check(phase) {
+            return false;
+        }
+        if skip_templates && phase == "templates" {
+            return false;
+        }
+        tuning_sel.run_phase(phase)
+    };
 
     // Create save directory if needed
     if let Some(ref dir) = config.save_dir {
@@ -812,7 +859,27 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     session_heartbeat(session_monitor.as_ref()).await;
 
     if run_phase("templates") {
-        let tpls = crate::templates::load_templates(config.templates_dir.as_deref());
+        let mut tpls = crate::templates::load_templates(config.templates_dir.as_deref());
+        // v0.10 (#25) — `--templates-include xss,sqli,ssti` mirrors the old
+        // `nuclei -tags` contract. We keep a template if ANY of its
+        // `info.tags` contains ANY of the requested substrings (case-
+        // insensitive). Empty list = run all templates (legacy behaviour).
+        if !config.templates_include.is_empty() {
+            let needles: Vec<String> = config.templates_include
+                .iter().map(|s| s.to_lowercase()).collect();
+            let before = tpls.len();
+            tpls.retain(|t| {
+                t.info.tags.iter().any(|tag| {
+                    let tag_lc = tag.to_lowercase();
+                    needles.iter().any(|n| tag_lc.contains(n.as_str()))
+                })
+            });
+            eprintln!(
+                "  {} templates scoped by --templates-include: {} → {}",
+                "templates:".dimmed(),
+                before, tpls.len()
+            );
+        }
         if !tpls.is_empty() {
             // Drop "({} templates)" from banner — count exposes our
             // template-store size which fingerprints the scanner.
@@ -973,6 +1040,51 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         http_events: fuzz_events,
         log_lines,
         rule_stats,
+        incomplete: deadline_state.is_expired(),
+        stopped_phase: deadline_state.stopped_phase(),
+    }
+}
+
+// ─── v0.10 (#26) — Max-duration deadline tracking ───────────────────────────
+// Tracks whether the scan has exceeded the configured deadline. Phases call
+// `check(<phase_name>)` between phases; if expired, the scan halts and the
+// final ScanResult is built with `incomplete = true` plus the name of the
+// phase that was about to run when the deadline tripped.
+
+#[derive(Debug)]
+struct DeadlineState {
+    deadline:      Option<Instant>,
+    stopped_phase: std::sync::Mutex<Option<String>>,
+}
+
+impl DeadlineState {
+    fn new(start: Instant, max_duration_secs: Option<u64>) -> Self {
+        Self {
+            deadline: max_duration_secs.map(|s| start + Duration::from_secs(s)),
+            stopped_phase: std::sync::Mutex::new(None),
+        }
+    }
+    fn is_expired(&self) -> bool {
+        match self.deadline {
+            Some(d) => Instant::now() >= d,
+            None => false,
+        }
+    }
+    /// Returns true if the caller should PROCEED with the phase. Records the
+    /// phase name as the "stopped" phase if the deadline has expired.
+    fn check(&self, phase: &str) -> bool {
+        if self.is_expired() {
+            let mut g = self.stopped_phase.lock().unwrap();
+            if g.is_none() {
+                *g = Some(phase.to_string());
+            }
+            false
+        } else {
+            true
+        }
+    }
+    fn stopped_phase(&self) -> Option<String> {
+        self.stopped_phase.lock().unwrap().clone()
     }
 }
 
