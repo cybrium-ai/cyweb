@@ -104,13 +104,21 @@ jobs:
             --wait
           echo "Notarization complete for ${{ matrix.name }}"
 
-      # Windows binary uploads under an "-unsigned" name so the
-      # sign-windows job (Trusted Signing reusable workflow) can mint
-      # the official cyweb-windows-amd64.exe artifact. All other
-      # platforms upload under the canonical matrix.name.
-      - uses: actions/upload-artifact@v4
+      # Linux + macOS: upload under canonical matrix.name. Windows uploads
+      # under "-unsigned" so the sign-windows job (Trusted Signing reusable
+      # workflow) can mint the official artifact name.
+      - name: Upload artifact (non-Windows)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ runner.os == 'Windows' && format('{0}-unsigned', matrix.name) || matrix.name }}
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}
+
+      - name: Upload artifact (Windows, unsigned)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-unsigned
           path: dist/${{ matrix.name }}
 
   # Windows Trusted Signing — runs only on v* tag pushes (federated
