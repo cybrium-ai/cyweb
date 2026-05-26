@@ -7,6 +7,7 @@ on:
 permissions:
   contents: write
   packages: write    # GHCR push for the cyweb container image
+  id-token: write    # OIDC federated token for Azure Trusted Signing (Windows)
 
 env:
   CARGO_TERM_COLOR: always
@@ -89,6 +90,33 @@ jobs:
           mkdir dist
           cp target/${{ matrix.target }}/release/cyweb.exe dist/${{ matrix.name }}
 
+      # ── Azure Trusted Signing (Windows binaries only) ──────────────
+      # Federated OIDC — no client_secret. Subject filter on the FIC
+      # is ref:refs/tags/v* so PR jobs literally cannot mint a token.
+      - name: Sign Windows binary via Azure Trusted Signing
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        uses: Azure/trusted-signing-action@v0.5
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: cybrium-signing
+          certificate-profile-name:     cybrium
+          files-folder:                 dist
+          files-folder-filter:          exe
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      - name: Verify Windows signature
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "dist/${{ matrix.name }}"
+          Write-Host "Signature status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "Signature verification failed: $($sig.Status)" }
+
       - name: Notarize macOS binary
         if: matrix.sign
         env:
@@ -104,38 +132,16 @@ jobs:
             --wait
           echo "Notarization complete for ${{ matrix.name }}"
 
-      # Linux + macOS: upload under canonical matrix.name. Windows uploads
-      # under "-unsigned" so the sign-windows job (Trusted Signing reusable
-      # workflow) can mint the official artifact name.
-      - name: Upload artifact (non-Windows)
-        if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
+      # Windows artifact is already signed in place by the previous
+      # step on tag pushes (no-op on PRs). All platforms upload under
+      # the canonical matrix.name so downstream jobs are uniform.
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: dist/${{ matrix.name }}
 
-      - name: Upload artifact (Windows, unsigned)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}-unsigned
-          path: dist/${{ matrix.name }}
-
-  # Windows Trusted Signing — runs only on v* tag pushes (federated
-  # credential subject filter blocks PRs anyway, but we gate the job
-  # explicitly so PR runs don't fail at workflow_call time).
-  sign-windows:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    uses: ./.github/workflows/_reusable-sign-windows.yml
-    with:
-      artifact-name:        cyweb-windows-amd64.exe-unsigned
-      output-artifact-name: cyweb-windows-amd64.exe
-      files-folder-filter:  exe
-    secrets: inherit
-
   release:
-    needs: [build, sign-windows]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -146,12 +152,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          # Skip the *-unsigned directory — only the signed Windows
-          # artifact participates in the release + checksum file.
           for dir in */; do
-            case "$dir" in
-              *-unsigned/) continue ;;
-            esac
             (cd "$dir" && sha256sum * >> ../checksums.txt)
           done
           cat checksums.txt
