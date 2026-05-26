@@ -104,13 +104,30 @@ jobs:
             --wait
           echo "Notarization complete for ${{ matrix.name }}"
 
+      # Windows binary uploads under an "-unsigned" name so the
+      # sign-windows job (Trusted Signing reusable workflow) can mint
+      # the official cyweb-windows-amd64.exe artifact. All other
+      # platforms upload under the canonical matrix.name.
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
+          name: ${{ runner.os == 'Windows' && format('{0}-unsigned', matrix.name) || matrix.name }}
           path: dist/${{ matrix.name }}
 
-  release:
+  # Windows Trusted Signing — runs only on v* tag pushes (federated
+  # credential subject filter blocks PRs anyway, but we gate the job
+  # explicitly so PR runs don't fail at workflow_call time).
+  sign-windows:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/_reusable-sign-windows.yml
+    with:
+      artifact-name:        cyweb-windows-amd64.exe-unsigned
+      output-artifact-name: cyweb-windows-amd64.exe
+      files-folder-filter:  exe
+    secrets: inherit
+
+  release:
+    needs: [build, sign-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,7 +138,12 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
+          # Skip the *-unsigned directory — only the signed Windows
+          # artifact participates in the release + checksum file.
           for dir in */; do
+            case "$dir" in
+              *-unsigned/) continue ;;
+            esac
             (cd "$dir" && sha256sum * >> ../checksums.txt)
           done
           cat checksums.txt

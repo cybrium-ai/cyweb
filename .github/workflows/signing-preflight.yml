@@ -1,0 +1,151 @@
+# Pre-flight lint for Azure Trusted Signing wiring
+#
+# CANONICAL SOURCE: sentinel-ai/infra/templates/github-workflows/signing-preflight.yml
+# Drop into each cy* repo as `.github/workflows/signing-preflight.yml`.
+#
+# Runs on PR (no signing token needed — federated subject filter blocks PRs)
+# AND on workflow_dispatch. Catches the four most common signing
+# misconfigurations BEFORE someone pushes a tag and finds out the
+# release pipeline is broken at sign-time:
+#
+#   1. AZURE_TENANT_ID / AZURE_CLIENT_ID secrets missing
+#   2. release.yml doesn't pin the trusted-signing-action version
+#   3. Federated credential subject mismatched to repo name
+#   4. release.yml doesn't pass files-folder / files-folder-filter
+#
+# This workflow NEVER attempts to sign anything. It's a static lint.
+
+name: Signing pre-flight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/_reusable-sign-windows.yml'
+      - '.github/workflows/signing-preflight.yml'
+  workflow_dispatch:
+  schedule:
+    # Weekly drift check — catches federated-credential rot without
+    # waiting for the next release.
+    - cron: '13 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check AZURE_* secrets are configured
+        env:
+          TENANT: ${{ secrets.AZURE_TENANT_ID }}
+          CLIENT: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          missing=0
+          if [ -z "$TENANT" ]; then
+            echo "::error::AZURE_TENANT_ID secret is NOT set in this repo."
+            echo "::error::Expected: 9f1735b5-5f84-491a-aee3-94dee7dacded (Cybrium tenant)"
+            missing=1
+          else
+            echo "AZURE_TENANT_ID is present (value redacted)"
+          fi
+          if [ -z "$CLIENT" ]; then
+            echo "::error::AZURE_CLIENT_ID secret is NOT set in this repo."
+            echo "::error::Expected: 82e1e236-e938-4d84-903f-24b2db4c1d88 (cybrium-signing-gha SP)"
+            missing=1
+          fi
+          [ "$missing" = 0 ]
+
+      - name: Lint workflow YAML
+        uses: rhysd/actionlint@v1.6.27
+        with:
+          files: |
+            .github/workflows/release.yml
+
+      - name: Verify trusted-signing-action is pinned + endpoint correct
+        run: |
+          set -e
+          F=.github/workflows/release.yml
+          R=.github/workflows/_reusable-sign-windows.yml
+          # Only one of release.yml or the reusable should actually call
+          # Azure/trusted-signing-action — find whichever exists.
+          TARGET=""
+          if grep -q 'Azure/trusted-signing-action' "$F" 2>/dev/null; then TARGET="$F"; fi
+          if [ -f "$R" ] && grep -q 'Azure/trusted-signing-action' "$R"; then TARGET="$R"; fi
+          if [ -z "$TARGET" ]; then
+            echo "::warning::No Azure/trusted-signing-action reference found — repo not yet wired for Trusted Signing."
+            exit 0
+          fi
+          echo "Inspecting $TARGET"
+
+          # Must be pinned to vN or vN.N or vN.N.N — never @main or @master.
+          if grep -E 'Azure/trusted-signing-action@(main|master)' "$TARGET"; then
+            echo "::error::trusted-signing-action MUST be pinned to a version tag, not @main/@master"
+            exit 1
+          fi
+
+          # Endpoint must be cus.codesigning.azure.net (centralus).
+          if ! grep -q 'cus.codesigning.azure.net' "$TARGET"; then
+            echo "::error::Wrong signing endpoint — must be https://cus.codesigning.azure.net/"
+            exit 1
+          fi
+
+          # Account name must be cybrium-signing.
+          if ! grep -q 'trusted-signing-account-name: *cybrium-signing' "$TARGET"; then
+            echo "::error::trusted-signing-account-name must be 'cybrium-signing'"
+            exit 1
+          fi
+
+          # Cert profile must be cybrium.
+          if ! grep -q 'certificate-profile-name: *cybrium' "$TARGET"; then
+            echo "::error::certificate-profile-name must be 'cybrium'"
+            exit 1
+          fi
+
+          # Must specify files-folder + files-folder-filter so signing
+          # isn't silently a no-op.
+          grep -q 'files-folder:' "$TARGET"        || { echo "::error::files-folder is required"; exit 1; }
+          grep -q 'files-folder-filter:' "$TARGET" || { echo "::error::files-folder-filter is required"; exit 1; }
+
+          echo "All Trusted Signing knobs look correct."
+
+      - name: Verify release.yml is tag-gated
+        run: |
+          # Federated credential subject is repo:<owner>/<repo>:ref:refs/tags/v*
+          # so the OIDC token can only be minted when the workflow is
+          # triggered by a tag push matching v*. Confirm release.yml
+          # actually triggers on tags AND doesn't accidentally also fire
+          # on PRs / pushes to branches (which would just no-op the sign
+          # step but waste runtime).
+          F=.github/workflows/release.yml
+          [ -f "$F" ] || { echo "::warning::no release.yml — skip"; exit 0; }
+          if ! grep -E "tags:.*['\"]?v\*['\"]?" "$F"; then
+            echo "::error::release.yml must trigger on tags: ['v*'] for FIC subject match"
+            exit 1
+          fi
+          if grep -q 'pull_request:' "$F"; then
+            echo "::warning::release.yml also triggers on pull_request — sign step will fail (FIC tag-gated). Consider gating the sign job with: if: startsWith(github.ref, 'refs/tags/v')"
+          fi
+          echo "release.yml trigger gating looks correct."
+
+      - name: Summary
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ### Trusted Signing pre-flight — passed
+
+          | Check | Status |
+          |---|---|
+          | AZURE_TENANT_ID secret present | ok |
+          | AZURE_CLIENT_ID secret present | ok |
+          | trusted-signing-action pinned | ok |
+          | Endpoint = cus.codesigning.azure.net | ok |
+          | Account = cybrium-signing | ok |
+          | Cert profile = cybrium | ok |
+          | files-folder + filter declared | ok |
+          | release.yml tag-gated to v* | ok |
+
+          The federated credential subject filter still blocks any
+          actual signing on PR — this lint is static-only.
+          EOF

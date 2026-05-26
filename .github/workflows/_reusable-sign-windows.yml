@@ -1,0 +1,92 @@
+# Reusable workflow — Azure Trusted Signing for Windows binaries
+#
+# CANONICAL SOURCE: sentinel-ai/infra/templates/github-workflows/_reusable-sign-windows.yml
+# Roll-out targets:   cybrium-ai/{cyscan,cyweb,cyprobe,cysense,cyred,cyradar,cyproxy}
+#
+# Called from each cy* repo's release.yml with the unsigned Windows artifact.
+# Returns a signed artifact under the same name.
+#
+# Required GitHub secrets in the CALLER repo (no client_secret — federated OIDC):
+#   AZURE_TENANT_ID   ← 9f1735b5-5f84-491a-aee3-94dee7dacded
+#   AZURE_CLIENT_ID   ← 82e1e236-e938-4d84-903f-24b2db4c1d88
+#
+# Federated credential subject MUST be: repo:cybrium-ai/<repo>:ref:refs/tags/v*
+# Tag-gated by design — PR jobs literally cannot mint a signing token.
+
+name: _reusable-sign-windows
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: 'Name of the unsigned artifact uploaded by the caller'
+        required: true
+        type: string
+      files-folder-filter:
+        description: 'Comma-separated list of extensions to sign (exe,dll,msix,...)'
+        required: false
+        type: string
+        default: 'exe,dll'
+      output-artifact-name:
+        description: 'Name to use when re-uploading the signed artifact'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  id-token: write    # required for federated OIDC token
+  contents: read
+
+jobs:
+  sign:
+    runs-on: windows-latest
+    steps:
+      - name: Download unsigned artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist
+
+      - name: Verify staging
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path dist -Recurse | Select-Object FullName,Length
+          if (-not (Test-Path dist)) { throw 'dist/ missing — caller did not upload artifact' }
+
+      - name: Sign via Azure Trusted Signing
+        uses: Azure/trusted-signing-action@v0.5
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: cybrium-signing
+          certificate-profile-name:     cybrium
+          files-folder:                 dist
+          files-folder-filter:          ${{ inputs.files-folder-filter }}
+          files-folder-recurse:         true
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          $exes = Get-ChildItem -Path dist -Recurse -Include *.exe,*.dll,*.msix
+          if (-not $exes) {
+            Write-Warning 'No signable files found in dist/'
+            exit 0
+          }
+          foreach ($f in $exes) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) — $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              throw "Signature verification failed for $($f.Name): $($sig.Status)"
+            }
+          }
+
+      - name: Upload signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.output-artifact-name != '' && inputs.output-artifact-name || inputs.artifact-name }}
+          path: dist/
+          overwrite: true
