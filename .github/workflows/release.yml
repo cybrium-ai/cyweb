@@ -93,6 +93,16 @@ jobs:
       # ── Azure Trusted Signing (Windows binaries only) ──────────────
       # Federated OIDC — no client_secret. Subject filter on the FIC
       # is ref:refs/tags/v* so PR jobs literally cannot mint a token.
+      # azure/login MUST run before trusted-signing-action so the
+      # DefaultAzureCredential chain finds an OIDC token to use.
+      - name: Azure login (federated OIDC)
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
       - name: Sign Windows binary via Azure Trusted Signing
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
         uses: Azure/trusted-signing-action@v0.5
