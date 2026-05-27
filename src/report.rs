@@ -1,7 +1,11 @@
 //! Output formatters — text, JSON, SARIF.
 
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+
 use crate::scanner::ScanResult;
-use crate::signatures::Severity;
+use crate::signatures::{Finding, Severity};
 use colored::Colorize;
 
 /// Pretty-print to terminal.
@@ -59,16 +63,15 @@ pub fn to_json(result: &ScanResult) -> String {
     serde_json::to_string_pretty(result).unwrap_or_else(|_| "{}".into())
 }
 
-/// v0.10 (#27) — JSONL output. One self-contained JSON object per line:
+/// JSONL output (line-oriented; one event per line):
 ///   * one "finding" event per finding
 ///   * one final "scan_complete" event with summary stats + the
 ///     `incomplete` / `stopped_phase` markers that --max-duration sets
 ///
-/// Streaming-as-discovered emission (each event flushed when generated
-/// rather than buffered) is tracked for v0.11 — this v0.10 implementation
-/// emits the same shape as a single batch at the end of `run_scan`. The
-/// shape is compatible with downstream `jq`, OpenSearch, the Cybrium
-/// platform's finding ingestor, and any other line-oriented consumer.
+/// The same wire shape is used for both end-of-scan batch output (this
+/// function) and the streaming-as-discovered path (`JsonlSink`). Shape is
+/// compatible with `jq`, OpenSearch ingest, and the Cybrium platform's
+/// finding ingestor.
 pub fn to_jsonl(result: &ScanResult) -> String {
     let mut out = String::new();
     for f in &result.findings {
@@ -104,6 +107,114 @@ pub fn to_jsonl(result: &ScanResult) -> String {
     out.push_str(&serde_json::to_string(&summary).unwrap_or_else(|_| "{}".into()));
     out.push('\n');
     out
+}
+
+// ── Streaming JSONL sink (v0.11) ─────────────────────────────────────────────
+//
+// Long scans accumulated findings for minutes before flushing anything to
+// stdout, defeating the point of a line-oriented format. The sink writes
+// each finding as a single line + flushes immediately. The summary line
+// is emitted at scan end via `finalize`.
+//
+// Operationally:
+//   * If the scan is killed (timeout, SIGINT, OOM), the file/pipe still
+//     contains every finding that was discovered up to that moment —
+//     just missing the trailing scan_complete row.
+//   * Pipeline consumers (jq, OpenSearch, the platform ingestor) can
+//     process findings as they arrive instead of waiting on the full
+//     ScanResult to materialise.
+//
+// Thread model: emits are sequential because run_scan extends
+// `all_findings` from a single future. No locking needed.
+
+pub struct JsonlSink {
+    writer: Box<dyn Write + Send>,
+    seen_ids: HashSet<String>,
+    pub findings_written: usize,
+}
+
+impl JsonlSink {
+    /// Sink that writes to a file (creates / truncates).
+    pub fn file(path: &str) -> std::io::Result<Self> {
+        let f = File::create(path)?;
+        Ok(Self {
+            writer: Box::new(BufWriter::new(f)),
+            seen_ids: HashSet::new(),
+            findings_written: 0,
+        })
+    }
+
+    /// Sink that writes to stdout (flushed every line so a piped consumer
+    /// sees findings as they're discovered, not at process exit).
+    pub fn stdout() -> Self {
+        Self {
+            writer: Box::new(BufWriter::with_capacity(8 * 1024, std::io::stdout())),
+            seen_ids: HashSet::new(),
+            findings_written: 0,
+        }
+    }
+
+    /// Emit one finding as a JSONL row. Subsequent calls with the same
+    /// `Finding.id` are silently skipped so the streamed sequence matches
+    /// the post-dedup `all_findings` that drives the final scan_complete
+    /// summary.
+    pub fn emit_finding(&mut self, f: &Finding) -> std::io::Result<()> {
+        if !self.seen_ids.insert(f.id.clone()) {
+            return Ok(());
+        }
+        let row = serde_json::json!({
+            "type":        "finding",
+            "id":          f.id,
+            "title":       f.title,
+            "severity":    f.severity.to_string().to_lowercase(),
+            "category":    f.category,
+            "url":         f.url,
+            "evidence":    f.evidence,
+            "description": f.description,
+            "remediation": f.remediation,
+            "cwe":         f.cwe,
+            "vuln_class":  f.vuln_class,
+        });
+        let line = serde_json::to_string(&row).unwrap_or_else(|_| "{}".into());
+        self.writer.write_all(line.as_bytes())?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()?;
+        self.findings_written += 1;
+        Ok(())
+    }
+
+    /// Emit a batch of findings (each on its own line). Best-effort: a
+    /// write failure logs to stderr but does not panic the scan.
+    pub fn emit_findings(&mut self, findings: &[Finding]) {
+        for f in findings {
+            if let Err(e) = self.emit_finding(f) {
+                eprintln!("cyweb: streaming JSONL write failed: {e}");
+                return;
+            }
+        }
+    }
+
+    /// Emit the final scan_complete row and flush the underlying writer.
+    /// Idempotent — safe to call from drop paths.
+    pub fn finalize(&mut self, result: &ScanResult) -> std::io::Result<()> {
+        let summary = serde_json::json!({
+            "type":            "scan_complete",
+            "target":          result.target,
+            "duration_ms":     result.duration_ms,
+            "total_findings":  result.summary.total,
+            "critical":        result.summary.critical,
+            "high":            result.summary.high,
+            "medium":          result.summary.medium,
+            "low":             result.summary.low,
+            "info":            result.summary.info,
+            "incomplete":      result.incomplete,
+            "stopped_phase":   result.stopped_phase,
+        });
+        let line = serde_json::to_string(&summary).unwrap_or_else(|_| "{}".into());
+        self.writer.write_all(line.as_bytes())?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
+    }
 }
 
 /// SARIF 2.1.0 output — compatible with GitHub, Azure DevOps, Cybrium platform.

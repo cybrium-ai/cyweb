@@ -1,11 +1,22 @@
 //! Core scan engine — orchestrates all checks against a target.
 
+use crate::report::JsonlSink;
 use crate::signatures::{self, Finding, Severity};
 use colored::Colorize;
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
+
+/// Best-effort streaming emit — if a JSONL sink is attached, write the
+/// findings as they're discovered. Sink errors are logged to stderr but
+/// never abort the scan. Wraps the borrow ceremony so each phase site
+/// stays a single readable line.
+fn stream_to_sink(sink: &mut Option<JsonlSink>, findings: &[Finding]) {
+    if let Some(s) = sink.as_mut() {
+        s.emit_findings(findings);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ScanConfig {
@@ -250,6 +261,20 @@ pub fn build_test_client(http_version: &str) -> Client {
 }
 
 pub async fn run_scan(config: ScanConfig) -> ScanResult {
+    let (result, _sink) = run_scan_with_sink(config, None).await;
+    result
+}
+
+/// Like `run_scan`, but emits each finding to `sink` as it's discovered.
+/// The same de-duplicated set is returned in `ScanResult.findings`; the
+/// sink is returned so the caller can invoke `sink.finalize(&result)` to
+/// write the trailing `scan_complete` row. Splitting finalize out lets
+/// callers attach extra fields to the summary before flushing without
+/// needing to reopen the underlying file.
+pub async fn run_scan_with_sink(
+    config: ScanConfig,
+    mut sink: Option<crate::report::JsonlSink>,
+) -> (ScanResult, Option<crate::report::JsonlSink>) {
     let start = Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
 
@@ -544,6 +569,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         let header_findings = signatures::headers::check_headers(&client, &target).await;
         eprintln!("  {} issues found", header_findings.len());
         requests_made += 1;
+        stream_to_sink(&mut sink, &header_findings);
         all_findings.extend(header_findings);
     }
 
@@ -553,6 +579,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         let method_findings = signatures::methods::check_methods(&client, &target).await;
         eprintln!("  {} issues found", method_findings.len());
         requests_made += method_findings.len().max(1);
+        stream_to_sink(&mut sink, &method_findings);
         all_findings.extend(method_findings);
     }
 
@@ -580,6 +607,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
                 std::fs::write(&path, format!("{}\n{}\n\n{}", f.url, f.evidence, f.description)).ok();
             }
         }
+        stream_to_sink(&mut sink, &path_findings);
         all_findings.extend(path_findings);
     }
 
@@ -594,6 +622,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         let server_findings = signatures::server::check_server(&client, &target, &server_info).await;
         eprintln!("  {} issues found", server_findings.len());
         requests_made += server_findings.len().max(1);
+        stream_to_sink(&mut sink, &server_findings);
         all_findings.extend(server_findings);
     }
 
@@ -630,6 +659,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         signatures::rules::check_rules(&client, &target, &rules, config.threads, baseline_hash).await;
     eprintln!("  {} findings from {} rules", rule_findings.len(), rules.len());
     requests_made += rules.len();
+    stream_to_sink(&mut sink, &rule_findings);
     all_findings.extend(rule_findings);
 
     // Phase 7: TLS analysis
@@ -642,6 +672,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             eprintln!("  Expires: {} ({} days)", t.valid_to.dimmed(), t.days_remaining);
         }
         eprintln!("  {} issues found", tls_findings.len());
+        stream_to_sink(&mut sink, &tls_findings);
         all_findings.extend(tls_findings);
         tls_info = tls;
         requests_made += 1;
@@ -674,6 +705,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         eprintln!("  {}", &summary_msg[19..]);
         log(&mut log_lines, "phase", summary_msg);
         requests_made += outcome.requests_made;
+        stream_to_sink(&mut sink, &outcome.findings);
         all_findings.extend(outcome.findings);
         crawled_urls = outcome.crawled_urls;
         crawl_nodes  = outcome.nodes;
@@ -717,6 +749,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         log(&mut log_lines, "phase",
             format!("Phase 8.5 (Passive HTML): {} findings", passive_findings.len()));
         requests_made += passive_findings.len().max(1);
+        stream_to_sink(&mut sink, &passive_findings);
         all_findings.extend(passive_findings);
     }
 
@@ -730,6 +763,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
                 .await;
         eprintln!("  {} findings", mixed_findings.len());
         requests_made += mixed_findings.len().max(1);
+        stream_to_sink(&mut sink, &mixed_findings);
         all_findings.extend(mixed_findings);
     }
 
@@ -745,6 +779,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         log(&mut log_lines, "phase",
             format!("Phase 8.7 (Vulnerable JS Library): {} findings", retire_findings.len()));
         requests_made += retire_findings.len().max(1);
+        stream_to_sink(&mut sink, &retire_findings);
         all_findings.extend(retire_findings);
     }
 
@@ -758,6 +793,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
             signatures::passive_html::check_passive(&client, &target, &crawled_urls).await;
         eprintln!("  {} findings", passive_findings.len());
         requests_made += passive_findings.len().max(1);
+        stream_to_sink(&mut sink, &passive_findings);
         all_findings.extend(passive_findings);
     }
 
@@ -771,6 +807,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
                 .await;
         eprintln!("  {} findings", mixed_findings.len());
         requests_made += mixed_findings.len().max(1);
+        stream_to_sink(&mut sink, &mixed_findings);
         all_findings.extend(mixed_findings);
     }
 
@@ -782,6 +819,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     } else {
         eprintln!("  No version-specific CVEs matched");
     }
+    stream_to_sink(&mut sink, &cve_findings);
     all_findings.extend(cve_findings);
 
     // Phase 10: Mutate/bruteforce
@@ -795,6 +833,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         ).await;
         eprintln!("  {} findings", mutate_findings.len());
         requests_made += mutate_findings.len().max(1);
+        stream_to_sink(&mut sink, &mutate_findings);
         all_findings.extend(mutate_findings);
     }
 
@@ -813,6 +852,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         eprintln!("{}", format!("Phase 10: OpenAPI spec scanning ({spec_url})...").cyan());
         let api_findings = crate::openapi::scan_openapi(&client, spec_url, &target).await;
         eprintln!("  {} findings from API spec", api_findings.len());
+        stream_to_sink(&mut sink, &api_findings);
         all_findings.extend(api_findings);
         requests_made += 10;
     } else {
@@ -821,6 +861,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         if !auto_spec.is_empty() {
             eprintln!("{}", "Phase 10: OpenAPI spec auto-discovered...".cyan());
             eprintln!("  {} findings from API spec", auto_spec.len());
+            stream_to_sink(&mut sink, &auto_spec);
             all_findings.extend(auto_spec);
             requests_made += 5;
         }
@@ -847,6 +888,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         log(&mut log_lines, "phase",
             format!("Phase 12 (Active fuzzing): {} findings, {} requests sent",
                     fuzz_findings.len(), evts.len()));
+        stream_to_sink(&mut sink, &fuzz_findings);
         all_findings.extend(fuzz_findings);
         fuzz_events = evts;
     }
@@ -888,6 +930,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
                 &client, &target, &tpls, config.threads,
             ).await;
             eprintln!("  {} findings", tpl_findings.len());
+            stream_to_sink(&mut sink, &tpl_findings);
             all_findings.extend(tpl_findings);
         }
     }
@@ -900,6 +943,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         eprintln!("{}", "Phase 14: Race condition probes...".cyan());
         let race_findings = crate::race::run_race(&client, &target, &crawled_urls).await;
         eprintln!("  {} race-condition findings", race_findings.len());
+        stream_to_sink(&mut sink, &race_findings);
         all_findings.extend(race_findings);
     }
 
@@ -910,6 +954,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         eprintln!("{}", "Phase 15: WebSocket hijacking probes...".cyan());
         let ws_findings = crate::websocket::run_websocket(&target, &crawled_urls).await;
         eprintln!("  {} WebSocket findings", ws_findings.len());
+        stream_to_sink(&mut sink, &ws_findings);
         all_findings.extend(ws_findings);
     }
 
@@ -918,7 +963,9 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
     // exhaustion warnings) into the report so operators can audit
     // what happened mid-scan.
     if let Some(ref monitor) = session_monitor {
-        all_findings.extend(monitor.drain_findings().await);
+        let monitor_drained = monitor.drain_findings().await;
+        stream_to_sink(&mut sink, &monitor_drained);
+        all_findings.extend(monitor_drained);
     }
 
     all_findings.sort_by(|a, b| a.id.cmp(&b.id));
@@ -1027,7 +1074,7 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         });
     }
 
-    ScanResult {
+    let result = ScanResult {
         target,
         started_at,
         completed_at,
@@ -1042,7 +1089,8 @@ pub async fn run_scan(config: ScanConfig) -> ScanResult {
         rule_stats,
         incomplete: deadline_state.is_expired(),
         stopped_phase: deadline_state.stopped_phase(),
-    }
+    };
+    (result, sink)
 }
 
 // ─── v0.10 (#26) — Max-duration deadline tracking ───────────────────────────

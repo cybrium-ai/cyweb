@@ -593,7 +593,40 @@ async fn main() {
             );
             eprintln!();
 
-            let result = scanner::run_scan(config).await;
+            // v0.11 — when --output is jsonl, build a streaming sink so
+            // each finding flushes as it's discovered. If the scan is
+            // killed (timeout, SIGINT, OOM), the partial output up to
+            // that moment is still readable line-by-line. The sink is
+            // returned by the scanner so we can finalize() it with the
+            // trailing scan_complete row without reopening the file.
+            let jsonl_sink: Option<report::JsonlSink> =
+                if matches!(output.as_str(), "jsonl" | "ndjson") {
+                    match &file {
+                        Some(path) => match report::JsonlSink::file(path) {
+                            Ok(s) => Some(s),
+                            Err(e) => {
+                                eprintln!("cyweb: cannot open --file {path}: {e}");
+                                None
+                            }
+                        },
+                        None => Some(report::JsonlSink::stdout()),
+                    }
+                } else {
+                    None
+                };
+
+            let (result, sink_out) = scanner::run_scan_with_sink(config, jsonl_sink).await;
+
+            // Finalize the streamed sink — writes the scan_complete summary
+            // row on the same writer the per-phase findings went out on.
+            if let Some(mut s) = sink_out {
+                if let Err(e) = s.finalize(&result) {
+                    eprintln!("cyweb: scan_complete summary write failed: {e}");
+                }
+                if let Some(path) = &file {
+                    eprintln!("\n{} {}", "JSONL report written to".green(), path);
+                }
+            }
 
             match output.as_str() {
                 "json" => {
@@ -606,18 +639,7 @@ async fn main() {
                     }
                 }
                 "jsonl" | "ndjson" => {
-                    // v0.10 (#27) — Newline-delimited JSON. One finding per
-                    // line + a terminating "scan_complete" event line. The
-                    // shape matches what `jq`, OpenSearch ingest, and the
-                    // Cybrium platform's finding ingestor expect from
-                    // line-oriented streams.
-                    let jsonl = report::to_jsonl(&result);
-                    if let Some(path) = &file {
-                        std::fs::write(path, &jsonl).expect("Failed to write output file");
-                        eprintln!("\n{} {}", "JSONL report written to".green(), path);
-                    } else {
-                        print!("{jsonl}");
-                    }
+                    // Streamed above. Nothing to emit here.
                 }
                 "sarif" => {
                     let sarif = report::to_sarif(&result);
