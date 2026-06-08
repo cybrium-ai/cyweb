@@ -1,27 +1,90 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Cybrium — cyweb findings</title>
+<link rel="icon" type="image/svg+xml" href="https://cybriumstorage.blob.core.windows.net/whitepapers/deck/logo_only.svg" />
 <style>
-  /* ── Cybrium dark theme (matches platform tokens) ─────────────────────── */
-  :root {
-    --bg:        #0a0a13;
-    --surface:   #14141f;
-    --surface-2: #1c1c2a;
-    --border:    #2a2a3a;
-    --text:      #e4e4ea;
-    --muted:     #8a8a98;
-    --primary:   #9747ff;
-    --primary-2: #b074ff;
-    --accent:    #06b6d4;
+  /* ── Cybrium UI Kit (dark default + light) ─────────────────────────────
+     Canonical palette per sentinel-ai/docs/design/cybrium-ui-kit.md.
+     Legacy token names (--surface, --muted, --primary-2, --accent) are
+     aliased to the canonical names so the existing CSS keeps working
+     unchanged. To change the palette, update the kit doc first, then
+     propagate to every cy* repo. */
+  :root, html[data-theme="dark"] {
+    --bg:           #0a0612;
+    --bg-card:      #11091f;
+    --bg-card-2:    #1a0f2e;
+    --bg-elev:      #221540;
+    --border:       #2a1c4a;
+    --border-soft:  #1d1238;
 
-    --sev-critical: #dc2626;
-    --sev-high:     #f97316;
-    --sev-medium:   #facc15;
-    --sev-low:      #3b82f6;
-    --sev-info:     #94a3b8;
+    --text:         #ece6ff;
+    --text-muted:   #9d8fc4;
+    --text-dim:     #6c5d96;
+
+    --primary:      #bd90f3;
+    --primary-soft: #5411a6;
+    --primary-deep: #2d0958;
+
+    --ok:    #5ee9b5;
+    --warn:  #f4c97a;
+    --err:   #f57b8a;
+    --info:  #7eb4f4;
+
+    --shadow:      0 6px 24px rgba(0,0,0,.5);
+    --word-filter: none;
+
+    --sev-critical: #f57b8a;
+    --sev-high:     #f4a36b;
+    --sev-medium:   #f4c97a;
+    --sev-low:      #7eb4f4;
+    --sev-info:     #9d8fc4;
+
+    /* Legacy aliases — keep existing CSS unchanged. */
+    --surface:   var(--bg-card);
+    --surface-2: var(--bg-card-2);
+    --muted:     var(--text-muted);
+    --primary-2: var(--primary);
+    --accent:    var(--info);
+  }
+
+  html[data-theme="light"] {
+    --bg:           #faf8ff;
+    --bg-card:      #ffffff;
+    --bg-card-2:    #f4eefb;
+    --bg-elev:      #ede4fa;
+    --border:       #d6c7ec;
+    --border-soft:  #ece4f7;
+
+    --text:         #1c1130;
+    --text-muted:   #5b4781;
+    --text-dim:     #a193c0;
+
+    --primary:      #5411a6;
+    --primary-soft: #7a3edb;
+    --primary-deep: #2d0958;
+
+    --ok:    #1f8f63;
+    --warn:  #b4730d;
+    --err:   #b3324a;
+    --info:  #2a64b7;
+
+    --shadow:      0 4px 16px rgba(60,30,120,.08);
+    --word-filter: invert(1) brightness(0);
+
+    --sev-critical: #b3324a;
+    --sev-high:     #b4730d;
+    --sev-medium:   #957404;
+    --sev-low:      #2a64b7;
+    --sev-info:     #5b4781;
+
+    --surface:   var(--bg-card);
+    --surface-2: var(--bg-card-2);
+    --muted:     var(--text-muted);
+    --primary-2: var(--primary);
+    --accent:    var(--info);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -39,12 +102,16 @@
   header {
     display: flex; align-items: center; gap: 16px;
     padding: 14px 28px;
-    background: linear-gradient(180deg, #14141f 0%, #0d0d18 100%);
+    background: var(--bg-card);
     border-bottom: 1px solid var(--border);
     position: sticky; top: 0; z-index: 10;
   }
   header .brand-shield { height: 30px; width: auto; }
-  header .brand-word   { height: 22px; width: auto; margin-left: -2px; }
+  header .brand-word   { height: 22px; width: auto; margin-left: -2px; filter: var(--word-filter); }
+  /* Cybrium UI Kit theme-toggle: shared moon/sun pattern. */
+  #theme-toggle .icon-sun { display: none; }
+  html[data-theme="light"] #theme-toggle .icon-moon { display: none; }
+  html[data-theme="light"] #theme-toggle .icon-sun  { display: inline; }
   header .target {
     margin-left: 24px; color: var(--muted); font-family: ui-monospace, monospace;
     font-size: 13px;
@@ -548,14 +615,38 @@
   <span class="target" id="target-host">—</span>
   <span class="meta" id="scan-meta"></span>
   <div class="export-group">
-    <button onclick="window.location='/api/export.json'">JSON</button>
-    <button onclick="window.location='/api/export.csv'">CSV</button>
-    <button onclick="window.location='/api/export.markdown'">Markdown</button>
-    <button onclick="window.location='/api/export.html'">HTML</button>
-    <button onclick="window.location='/api/export.sarif'">SARIF</button>
-    <button onclick="window.location='/api/export.xml'">XML</button>
+    <button type="button" onclick="window.location='/api/export.json'">JSON</button>
+    <button type="button" onclick="window.location='/api/export.csv'">CSV</button>
+    <button type="button" onclick="window.location='/api/export.markdown'">Markdown</button>
+    <button type="button" onclick="window.location='/api/export.html'">HTML</button>
+    <button type="button" onclick="window.location='/api/export.sarif'">SARIF</button>
+    <button type="button" onclick="window.location='/api/export.xml'">XML</button>
+    <button type="button" id="theme-toggle" title="Toggle dark / light theme" aria-label="Toggle theme">
+      <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun"  width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
   </div>
 </header>
+
+<script>
+// Cybrium UI Kit — theme bootstrap (cy-tls / cyweb / cyproxy share this).
+(function () {
+  const KEY = "cybrium-theme";
+  const html = document.documentElement;
+  const saved = localStorage.getItem(KEY);
+  const sysLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+  html.dataset.theme = saved || (sysLight ? "light" : "dark");
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      const next = html.dataset.theme === "dark" ? "light" : "dark";
+      html.dataset.theme = next;
+      localStorage.setItem(KEY, next);
+    });
+  });
+})();
+</script>
 
 <main>
 

@@ -1,0 +1,48 @@
+# Multi-stage Dockerfile for ACR pushes from a developer machine.
+# The release pipeline uses the slim Dockerfile (which expects pre-built
+# binaries from the GitHub Actions matrix). This file compiles cyweb
+# from source inside the image so a developer can `docker buildx build`
+# from a clean checkout without depending on the GHA artifact pipeline.
+
+# ── Builder stage ───────────────────────────────────────────────────────
+FROM rust:slim-bookworm AS builder
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+        ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY rules ./rules
+COPY payloads ./payloads
+
+RUN cargo build --release --locked --bin cyweb \
+ && strip target/release/cyweb
+
+# ── Runtime stage ───────────────────────────────────────────────────────
+FROM debian:trixie-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tini \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/cyweb
+
+COPY --from=builder /build/target/release/cyweb /usr/local/bin/cyweb
+RUN chmod +x /usr/local/bin/cyweb \
+ && /usr/local/bin/cyweb version
+
+COPY payloads /opt/cyweb/payloads
+COPY rules    /opt/cyweb/rules
+
+ENV CYWEB_PAYLOADS_DIR=/opt/cyweb/payloads \
+    CYWEB_RULES_DIR=/opt/cyweb/rules
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cyweb"]
+CMD ["--help"]
