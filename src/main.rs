@@ -24,6 +24,7 @@ mod fuzz;
 mod gui;
 mod proxy;
 mod hardware_rot;
+mod licensing;
 mod templates;
 mod template_convert;
 // v0.8.5 — protocol runners (DNS / TCP / headless) + interactsh OAST.
@@ -370,6 +371,35 @@ enum Commands {
         #[arg(long, default_value = "8990")]
         port: u16,
     },
+
+    /// v0.11 — Sprint 127 Phase 1: print the stable hardware fingerprint
+    /// for this host. Sourced from TPM / Secure Enclave when available,
+    /// falling back to firmware UUID / machine-id. The `host_id_source`
+    /// field discloses which class of identifier was used.
+    Fingerprint,
+
+    /// v0.11 — Sprint 127 Phase 1: per-host license-state CRUD. Local
+    /// only, no network, no refuse-to-run enforcement yet. Phase 3 wires
+    /// the enforcement guard once the backend licensing endpoint ships.
+    #[command(subcommand)]
+    License(LicenseCommand),
+}
+
+#[derive(Subcommand)]
+enum LicenseCommand {
+    /// Show the current license-state file, or `{"bound": false}` when none.
+    Show,
+    /// Bind this host to the given license key. Phase 1: local only.
+    Activate {
+        /// License key issued by Cybrium.
+        #[arg(required = true)]
+        key: String,
+    },
+    /// Remove the local license-state file.
+    Deactivate,
+    /// Re-read the current hardware fingerprint and compare to stored.
+    /// Exits non-zero on mismatch.
+    Verify,
 }
 
 #[tokio::main]
@@ -934,6 +964,76 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+
+        Commands::Fingerprint => {
+            let fp = licensing::fingerprint();
+            match serde_json::to_string_pretty(&fp) {
+                Ok(j) => println!("{j}"),
+                Err(e) => {
+                    eprintln!("error serialising fingerprint: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::License(sub) => match sub {
+            LicenseCommand::Show => match licensing::load_license() {
+                Ok(Some(state)) => match serde_json::to_string_pretty(&state) {
+                    Ok(j) => println!("{j}"),
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Ok(None) => println!("{{\"bound\": false}}"),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            },
+            LicenseCommand::Activate { key } => match licensing::activate_local(&key) {
+                Ok(state) => {
+                    let path = licensing::license_path().ok();
+                    eprintln!(
+                        "Bound to license_id={}{}",
+                        state.license_id,
+                        path.as_ref()
+                            .map(|p| format!(" at {}", p.display()))
+                            .unwrap_or_default()
+                    );
+                    eprintln!(
+                        "Phase 1: local-only binding (no server signature). Fingerprint source: {} ({})",
+                        state.fingerprint.host_id_source,
+                        state.fingerprint.root_of_trust.kind.as_str()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("activate failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+            LicenseCommand::Deactivate => match licensing::remove_license() {
+                Ok(true) => eprintln!("License removed."),
+                Ok(false) => eprintln!("No license file to remove."),
+                Err(e) => {
+                    eprintln!("deactivate failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+            LicenseCommand::Verify => match licensing::verify_binding() {
+                Ok(true) => eprintln!("OK — current hardware fingerprint matches stored license."),
+                Ok(false) => {
+                    eprintln!(
+                        "MISMATCH — current hardware fingerprint differs from the one stored at activation."
+                    );
+                    std::process::exit(2);
+                }
+                Err(e) => {
+                    eprintln!("verify failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+        },
     }
 }
 

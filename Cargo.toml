@@ -1,6 +1,6 @@
 [package]
 name = "cyweb"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["Cybrium AI <hello@cybrium.ai>"]
 description = "Fast, accurate web vulnerability scanner. Scans headers, paths, server configs, and known vulnerabilities."
@@ -14,6 +14,8 @@ name = "cyweb"
 path = "src/main.rs"
 
 [dependencies]
+# v0.11 — error context for src/licensing.rs (Sprint 127 Phase 1).
+anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "cookies", "rustls-tls", "http2"], default-features = false }
 clap = { version = "4", features = ["derive"] }
