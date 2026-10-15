@@ -1,6 +1,6 @@
 [package]
 name = "cyweb"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 authors = ["Cybrium AI <hello@cybrium.ai>"]
 description = "Fast, accurate web vulnerability scanner. Scans headers, paths, server configs, and known vulnerabilities."
@@ -65,7 +65,7 @@ tower = "0.5"
 # pulls in async-tungstenite + websocket transport but no Chromium
 # binary itself; the operator needs Chrome / Chromium installed
 # locally (auto-discovered, or override via CYWEB_CHROME_PATH env).
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"], default-features = false }
+chromiumoxide = { version = "0.9", default-features = false }
 
 [profile.release]
 opt-level = 3
