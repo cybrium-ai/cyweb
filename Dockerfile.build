@@ -26,12 +26,29 @@ RUN cargo build --release --locked --bin cyweb \
 # ── Runtime stage ───────────────────────────────────────────────────────
 FROM debian:trixie-slim
 
+# The AJAX spider drives a headless browser over CDP (chromiumoxide). We do
+# NOT use the distro Chromium as the browser — trixie ships Chromium 155, whose
+# CDP protocol is far newer than chromiumoxide's generated bindings can parse
+# ("data did not match any variant of untagged enum Message" → every command
+# hangs). Instead we pin a Chrome-for-Testing build matched to the CDP lib and
+# install the distro `chromium` ONLY for its shared-library dependency closure
+# (libnss3 / libgbm1 / libasound2t64 / fonts / …), which the pinned Chrome
+# links against — avoiding a hand-maintained, trixie-t64-renamed lib list.
+ARG CHROME_VERSION=136.0.7103.94
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates \
         tini \
         chromium \
- && rm -rf /var/lib/apt/lists/*
+        wget \
+        unzip \
+ && wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" -O /tmp/chrome.zip \
+ && unzip -q /tmp/chrome.zip -d /opt \
+ && rm /tmp/chrome.zip \
+ && apt-get purge -y wget unzip \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/* \
+ && /opt/chrome-linux64/chrome --version
 
 WORKDIR /opt/cyweb
 
@@ -44,7 +61,7 @@ COPY rules    /opt/cyweb/rules
 
 ENV CYWEB_PAYLOADS_DIR=/opt/cyweb/payloads \
     CYWEB_RULES_DIR=/opt/cyweb/rules \
-    CYWEB_CHROME_PATH=/usr/bin/chromium
+    CYWEB_CHROME_PATH=/opt/chrome-linux64/chrome
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cyweb"]
 CMD ["--help"]
