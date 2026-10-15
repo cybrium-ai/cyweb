@@ -103,6 +103,12 @@ fn default_inject_as() -> String {
 pub struct DetectConfig {
     #[serde(default)]
     pub body_contains: Option<String>,
+    /// Reflection guard: when set, a `body_contains` hit is suppressed if this
+    /// string (typically the raw, un-evaluated payload expression) is ALSO
+    /// present — proving the response merely reflected the payload rather than
+    /// evaluating it. Kills the SSTI/arithmetic false-positive class.
+    #[serde(default)]
+    pub body_not_contains: Option<String>,
     #[serde(default)]
     pub body_regex: Option<String>,
     #[serde(default)]
@@ -722,7 +728,19 @@ fn evaluate_detection(
 ) -> Option<String> {
     if let Some(ref needle) = detect.body_contains {
         if body.contains(needle.as_str()) {
-            return Some(format!("Body contains: \"{}\"", truncate(needle, 80)));
+            // Reflection guard: a true positive shows the COMPUTED value but not
+            // the raw expression. If the literal payload is also echoed back,
+            // the response merely reflected it (no server-side evaluation) —
+            // suppress rather than raise a false critical.
+            if let Some(ref anti) = detect.body_not_contains {
+                if body.contains(anti.as_str()) {
+                    return None;
+                }
+            }
+            return Some(format!(
+                "Response contains computed value \"{}\" (expression evaluated server-side; raw payload not reflected)",
+                truncate(needle, 80)
+            ));
         }
     }
 
@@ -849,4 +867,48 @@ fn remediation_for(category: &str) -> String {
 /// Describe the fuzz engine for display.
 pub fn describe() -> &'static str {
     "YAML-driven context-aware fuzzing"
+}
+
+#[cfg(test)]
+mod ssti_oracle_tests {
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    fn detect(contains: &str, not_contains: Option<&str>) -> DetectConfig {
+        DetectConfig {
+            body_contains: Some(contains.to_string()),
+            body_not_contains: not_contains.map(|s| s.to_string()),
+            body_regex: None,
+            status_change: None,
+            status_error: None,
+            time_based_ms: None,
+            header_contains: None,
+        }
+    }
+
+    // Server-side evaluation: computed value present, raw expression absent → TP.
+    #[test]
+    fn evaluated_expression_is_detected() {
+        let d = detect("1787569", Some("1337*1337"));
+        let body = "<h1>Welcome</h1><span>1787569</span>";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200).is_some());
+    }
+
+    // Pure reflection: raw expression echoed back → suppressed (was the FP class).
+    #[test]
+    fn reflected_payload_is_suppressed() {
+        let d = detect("1787569", Some("1337*1337"));
+        // App echoes the literal payload AND happens to contain the digits too.
+        let body = "You searched for {{1337*1337}}. Order #1787569 not found.";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200).is_none());
+    }
+
+    // Coincidental substring with the OLD oracle would fire; the distinctive
+    // product does not appear by chance, so no detection.
+    #[test]
+    fn coincidental_value_does_not_fire() {
+        let d = detect("1787569", Some("1337*1337"));
+        let body = "Showing 49 of 1337 results";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200).is_none());
+    }
 }

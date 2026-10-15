@@ -3,30 +3,41 @@ name: Server-side template injection
 context:
   any: true
 
+# Oracle design (why the arithmetic is 1337*1337, not 7*7):
+#   The classic `{{7*7}}` → "49" probe false-positives constantly because
+#   "49" is an everyday string (a count, an id, a price, a pixel value) that
+#   appears in most responses regardless of the payload. We instead inject a
+#   distinctive product — 1337*1337 = 1787569 — which is vanishingly unlikely
+#   to occur by chance, AND require that the LITERAL expression is NOT present
+#   in the response (body_not_contains). A real template-injection evaluates
+#   the expression server-side: the computed value "1787569" appears and the
+#   raw "1337*1337" does not. A page that merely reflects the payload shows
+#   the literal "1337*1337" (and no "1787569") and is correctly suppressed.
+
 payloads:
-  - value: "{{7*7}}"
-    detect: { body_contains: "49" }
+  - value: "{{1337*1337}}"
+    detect: { body_contains: "1787569", body_not_contains: "1337*1337" }
     id: ssti-jinja-01
     title: "SSTI — Jinja2/Twig expression evaluation"
     severity: critical
     cwe: CWE-1336
 
-  - value: "${7*7}"
-    detect: { body_contains: "49" }
+  - value: "${1337*1337}"
+    detect: { body_contains: "1787569", body_not_contains: "1337*1337" }
     id: ssti-el-01
     title: "SSTI — EL/OGNL expression evaluation"
     severity: critical
     cwe: CWE-1336
 
-  - value: "#{7*7}"
-    detect: { body_contains: "49" }
+  - value: "#{1337*1337}"
+    detect: { body_contains: "1787569", body_not_contains: "1337*1337" }
     id: ssti-ruby-01
     title: "SSTI — Ruby ERB expression evaluation"
     severity: critical
     cwe: CWE-1336
 
-  - value: "<%= 7*7 %>"
-    detect: { body_contains: "49" }
+  - value: "<%= 1337*1337 %>"
+    detect: { body_contains: "1787569", body_not_contains: "1337*1337" }
     id: ssti-ejs-01
     title: "SSTI — EJS/ASP expression evaluation"
     severity: critical
