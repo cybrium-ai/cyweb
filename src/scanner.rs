@@ -856,7 +856,9 @@ pub async fn run_scan_with_sink(
         all_findings.extend(api_findings);
         requests_made += 10;
     } else {
-        // Auto-discover OpenAPI spec
+        // Auto-discover OpenAPI spec — first the well-known path, then,
+        // failing that, crawl-driven discovery over every URL the spider
+        // observed (deep / non-standard spec paths + Swagger-UI/Redoc pages).
         let auto_spec = crate::openapi::scan_openapi(&client, &format!("{target}/openapi.json"), &target).await;
         if !auto_spec.is_empty() {
             eprintln!("{}", "Phase 10: OpenAPI spec auto-discovered...".cyan());
@@ -864,6 +866,19 @@ pub async fn run_scan_with_sink(
             stream_to_sink(&mut sink, &auto_spec);
             all_findings.extend(auto_spec);
             requests_made += 5;
+        } else if config.spider_enabled && !crawl_nodes.is_empty() {
+            let (spec_url, crawl_spec) =
+                crate::openapi::discover_from_crawl(&client, &target, &crawl_nodes).await;
+            if let Some(u) = spec_url {
+                eprintln!("{}", format!("Phase 10: OpenAPI spec discovered via crawl ({u})...").cyan());
+                eprintln!("  {} findings from API spec", crawl_spec.len());
+                log(&mut log_lines, "phase",
+                    format!("Phase 10 (OpenAPI): spec discovered via crawl at {u}, {} findings",
+                            crawl_spec.len()));
+                stream_to_sink(&mut sink, &crawl_spec);
+                all_findings.extend(crawl_spec);
+                requests_made += 10;
+            }
         }
     }
 
