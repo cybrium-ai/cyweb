@@ -12,10 +12,24 @@
 //! see them.
 
 use crate::crawler::{CrawledNode, SeedSource};
+use chromiumoxide::cdp::browser_protocol::network::{EnableParams, EventRequestWillBeSent};
 use chromiumoxide::Browser;
 use chromiumoxide::BrowserConfig;
 use futures::StreamExt;
 use std::time::Duration;
+
+/// Path suffixes for static assets that carry no injectable surface — skipped
+/// when folding captured network requests into the crawl list so the fuzzer
+/// isn't handed fonts/images/stylesheets.
+const STATIC_ASSET_EXTS: [&str; 13] = [
+    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico",
+    ".woff", ".woff2", ".ttf", ".map",
+];
+
+fn is_static_asset(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url).to_ascii_lowercase();
+    STATIC_ASSET_EXTS.iter().any(|ext| path.ends_with(ext))
+}
 
 /// Drive a headless Chrome at `target`, return additional URLs
 /// discovered after JS rendered. Errors return empty vec — falling
@@ -25,7 +39,10 @@ use std::time::Duration;
 pub async fn ajax_crawl(target: &str, max_pages: usize) -> Vec<CrawledNode> {
     let chrome_path = std::env::var("CYWEB_CHROME_PATH").ok();
 
-    let mut config_builder = BrowserConfig::builder();
+    // no_sandbox is required to launch Chrome as a non-root user inside a
+    // container without the SUID sandbox / user-namespace caps (the K8s Job
+    // case). DEFAULT_ARGS already carries --disable-dev-shm-usage.
+    let mut config_builder = BrowserConfig::builder().no_sandbox();
     if let Some(p) = chrome_path {
         config_builder = config_builder.chrome_executable(p);
     }
@@ -88,18 +105,42 @@ async fn drive_crawl(
             continue;
         }
 
-        let page = match browser.new_page(&url).await {
+        // Open a blank page first so the network listener is wired BEFORE
+        // navigation — then drive it to the URL. This captures the XHR/fetch
+        // endpoints the SPA calls as it boots (its real server-side attack
+        // surface, e.g. /rest/products/search?q=), which a DOM <a href> scan
+        // alone never sees.
+        let page = match browser.new_page("about:blank").await {
             Ok(p) => p,
             Err(e) => {
-                tracing::debug!("ajax page open failed: {}", e);
+                tracing::debug!("ajax blank page open failed: {}", e);
                 continue;
             }
         };
-        // Give the SPA up to 6 seconds to settle. wait_for_navigation
-        // returns once load event fires; we add a small extra delay
-        // for the JS app to populate its nav.
+        let _ = page.execute(EnableParams::default()).await;
+        let mut req_stream = page.event_listener::<EventRequestWillBeSent>().await.ok();
+
+        if let Err(e) = page.goto(&url).await {
+            tracing::debug!("ajax navigate failed: {}", e);
+            let _ = page.close().await;
+            continue;
+        }
+        // Give the SPA time to settle while we drain the network events it
+        // fires. wait_for_navigation returns once the load event fires; the
+        // drain window lets the JS app populate its nav AND issue its API calls.
         let _ = page.wait_for_navigation().await;
-        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        let mut captured: Vec<String> = Vec::new();
+        if let Some(stream) = req_stream.as_mut() {
+            let drain = async {
+                while let Some(ev) = stream.next().await {
+                    captured.push(ev.request.url.clone());
+                }
+            };
+            let _ = tokio::time::timeout(Duration::from_millis(3500), drain).await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+        }
 
         // Pull every <a href> from the rendered DOM.
         let result = page
@@ -107,13 +148,26 @@ async fn drive_crawl(
                 "Array.from(document.querySelectorAll('a[href]')).map(a => a.href)",
             )
             .await;
-        let links: Vec<String> = match result {
+        let dom_links: Vec<String> = match result {
             Ok(eval) => eval.into_value().unwrap_or_default(),
             Err(_) => Vec::new(),
         };
 
+        // Merge DOM links (tagged AJAX) with captured network requests (tagged
+        // XHR). Static assets from the network capture are dropped — they carry
+        // no injectable surface.
+        let mut candidates: Vec<(String, &'static str)> = Vec::new();
+        for l in dom_links {
+            candidates.push((l, "AJAX"));
+        }
+        for r in captured {
+            if !is_static_asset(&r) {
+                candidates.push((r, "XHR"));
+            }
+        }
+
         let parent = url.clone();
-        for raw in links {
+        for (raw, tag) in candidates {
             // Resolve relative URLs in the unlikely case Chrome left
             // them un-resolved (it usually returns absolute).
             let abs = match url::Url::parse(&raw) {
@@ -142,7 +196,7 @@ async fn drive_crawl(
                 resp_header_size: 0,
                 resp_body_size: 0,
                 reason: None,
-                tags: vec!["AJAX".into()],
+                tags: vec![tag.into()],
                 highest_alert: None,
             });
             if in_scope && !visited.contains(&abs_str) && queue.len() + visited.len() < max_pages * 2 {

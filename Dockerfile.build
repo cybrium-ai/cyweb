@@ -30,6 +30,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates \
         tini \
+        chromium \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/cyweb
@@ -42,7 +43,8 @@ COPY payloads /opt/cyweb/payloads
 COPY rules    /opt/cyweb/rules
 
 ENV CYWEB_PAYLOADS_DIR=/opt/cyweb/payloads \
-    CYWEB_RULES_DIR=/opt/cyweb/rules
+    CYWEB_RULES_DIR=/opt/cyweb/rules \
+    CYWEB_CHROME_PATH=/usr/bin/chromium
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cyweb"]
 CMD ["--help"]
