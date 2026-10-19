@@ -613,7 +613,7 @@ pub async fn run_fuzz(
                     }
                 }
 
-                if let Some(evidence) = evaluate_detection(&payload.detect, &body, &headers, status, elapsed, baseline_status) {
+                if let Some(evidence) = evaluate_detection(&payload.detect, &body, &headers, status, elapsed, baseline_status, &pf.id) {
                     found_ids.insert(finding_id.clone());
                     let f = Finding {
                         id: finding_id,
@@ -696,7 +696,7 @@ async fn test_special_injection(
         return None;
     }
 
-    evaluate_detection(&payload.detect, &body, &headers, status, elapsed, baseline_status).map(|evidence| {
+    evaluate_detection(&payload.detect, &body, &headers, status, elapsed, baseline_status, category).map(|evidence| {
         Finding {
             id: finding_id,
             title: payload.title.clone(),
@@ -718,6 +718,31 @@ async fn test_special_injection(
 
 // ── Detection evaluation ─────────────────────────────────────────────────────
 
+/// Injection classes whose findings MUST be corroborated by an
+/// injection-specific signal before they can be raised. For these a bare
+/// baseline→payload status flip (or response-length change) is NOT proof of
+/// injection — it is almost always ordinary content handling: framework
+/// content-negotiation, a soft-404, or input validation rejecting a malformed
+/// value. The real differential a probe like a UNION column-count or a NoSQL
+/// operator relies on is a *boolean pair* (true-vs-false payloads diverge while
+/// a control request stays at baseline), a measurable time delta, an error
+/// signature, a reflected computed value, or an out-of-band callback — never a
+/// single uncorroborated status delta.
+///
+/// This exists because `app.cybrium.ai/api/auth/branding/?format=…` produced 7
+/// CRITICAL/HIGH injection findings (UNION SQLi, LDAP injection, OOB command
+/// injection) whose ONLY evidence was `Status changed: 200 -> 404`. That 404 is
+/// DRF content-negotiation rejecting an unknown `?format=` value; the view reads
+/// no query parameters and runs one parameterized ORM lookup — there is no SQL /
+/// shell / LDAP sink. All three classes returned byte-identical 404s.
+fn is_differential_reliant_injection(category: &str) -> bool {
+    let c = category.to_ascii_lowercase();
+    c.starts_with("sqli")
+        || c.starts_with("ldap")
+        || c.starts_with("cmdi")
+        || c.starts_with("nosqli")
+}
+
 fn evaluate_detection(
     detect: &DetectConfig,
     body: &str,
@@ -725,6 +750,7 @@ fn evaluate_detection(
     status: u16,
     elapsed_ms: u64,
     baseline_status: u16,
+    category: &str,
 ) -> Option<String> {
     if let Some(ref needle) = detect.body_contains {
         if body.contains(needle.as_str()) {
@@ -756,10 +782,11 @@ fn evaluate_detection(
         return Some(format!("HTTP {} error response", status));
     }
 
-    if detect.status_change.unwrap_or(false) && status != baseline_status {
-        return Some(format!("Status changed: {} -> {} (baseline: {})", baseline_status, status, baseline_status));
-    }
-
+    // Corroborating signals are evaluated BEFORE the bare status-change branch
+    // so that a payload whose detect block pairs `status_change` with a real
+    // corroborator (e.g. a time delta) is judged on the corroborator. This
+    // ordering also makes the invariant below sound: if control reaches the
+    // status_change branch, no injection-specific corroborator matched.
     if let Some(threshold) = detect.time_based_ms {
         if elapsed_ms > threshold {
             return Some(format!("Response time: {}ms (threshold: {}ms)", elapsed_ms, threshold));
@@ -776,6 +803,19 @@ fn evaluate_detection(
                 }
             }
         }
+    }
+
+    if detect.status_change.unwrap_or(false) && status != baseline_status {
+        // Corroboration guard: for the differential-reliant injection classes a
+        // bare status flip is not, on its own, proof of injection. Every
+        // injection-specific corroborator (error signature, time delta, computed
+        // reflection, header) is checked above and returns on match, so reaching
+        // here means NONE corroborated — downgrade to not-a-finding rather than
+        // raise a false critical/high. Kills the `?format=` 200→404 FP class.
+        if is_differential_reliant_injection(category) {
+            return None;
+        }
+        return Some(format!("Status changed: {} -> {} (baseline: {})", baseline_status, status, baseline_status));
     }
 
     None
@@ -891,7 +931,7 @@ mod ssti_oracle_tests {
     fn evaluated_expression_is_detected() {
         let d = detect("1787569", Some("1337*1337"));
         let body = "<h1>Welcome</h1><span>1787569</span>";
-        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200).is_some());
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200, "ssti").is_some());
     }
 
     // Pure reflection: raw expression echoed back → suppressed (was the FP class).
@@ -900,7 +940,7 @@ mod ssti_oracle_tests {
         let d = detect("1787569", Some("1337*1337"));
         // App echoes the literal payload AND happens to contain the digits too.
         let body = "You searched for {{1337*1337}}. Order #1787569 not found.";
-        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200).is_none());
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200, "ssti").is_none());
     }
 
     // Coincidental substring with the OLD oracle would fire; the distinctive
@@ -909,6 +949,120 @@ mod ssti_oracle_tests {
     fn coincidental_value_does_not_fire() {
         let d = detect("1787569", Some("1337*1337"));
         let body = "Showing 49 of 1337 results";
-        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200).is_none());
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 0, 200, "ssti").is_none());
+    }
+}
+
+#[cfg(test)]
+mod injection_corroboration_tests {
+    //! The injection-oracle corroboration guard. A bare baseline→payload status
+    //! flip (or length change) must NOT raise a finding for the
+    //! differential-reliant injection classes (sqli/*, ldap/*, cmdi/*,
+    //! nosqli/*). It must still fire when an injection-specific corroborator is
+    //! present: an error signature, a UNION data marker, a time delta, or a
+    //! computed-value reflection. Regression target: the
+    //! `app.cybrium.ai/api/auth/branding/?format=…` 200→404 content-negotiation
+    //! false positives.
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    fn status_only() -> DetectConfig {
+        DetectConfig {
+            body_contains: None,
+            body_not_contains: None,
+            body_regex: None,
+            status_change: Some(true),
+            status_error: None,
+            time_based_ms: None,
+            header_contains: None,
+        }
+    }
+
+    // ── (a) the FP is suppressed ────────────────────────────────────────────
+
+    // UNION SQLi probe, ONLY evidence a 200→404 status flip (the DRF
+    // `?format=` content-negotiation case). Must be suppressed.
+    #[test]
+    fn status_flip_only_suppressed_for_union_sqli() {
+        let d = status_only();
+        let body = r#"{"detail":"Not found."}"#;
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 404, 5, 200, "sqli-union").is_none());
+    }
+
+    // The same bare status flip across every differential-reliant class.
+    #[test]
+    fn status_flip_only_suppressed_for_all_injection_classes() {
+        let d = status_only();
+        let body = r#"{"detail":"Not found."}"#;
+        for category in ["sqli-union", "sqli-php", "ldap-inject", "cmdi-os", "nosqli-mongo"] {
+            assert!(
+                evaluate_detection(&d, body, &HeaderMap::new(), 404, 5, 200, category).is_none(),
+                "bare status flip must not raise an injection finding for {category}"
+            );
+        }
+    }
+
+    // A length-only change (differing body, same semantic analysis) is likewise
+    // not a finding on its own: there is no standalone length detector, and the
+    // status flip that accompanies it is suppressed for injection classes.
+    #[test]
+    fn length_change_without_corroborator_is_not_a_finding() {
+        let d = status_only();
+        // Longer body than baseline, still a plain 404 rejection.
+        let body = r#"{"detail":"Not found.","available_renderers":["json","api"]}"#;
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 404, 5, 200, "nosqli-mongo").is_none());
+    }
+
+    // ── (b) genuine injection findings still fire ───────────────────────────
+
+    // Error-based SQLi: DB error signature in the body → fires even though the
+    // category is a suppressed class, because the corroborator matched first.
+    #[test]
+    fn error_based_sqli_still_fires() {
+        let mut d = status_only();
+        d.body_contains = Some("syntax error".into());
+        let body = "You have an error in your SQL syntax error near '''";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 500, 5, 200, "sqli-error").is_some());
+    }
+
+    // UNION data-exfiltration marker (CONCAT(0x71,0x6b,0x71) → "qkq"): a real
+    // UNION corroborator survives while the bare column-count probes do not.
+    #[test]
+    fn union_data_marker_still_fires() {
+        let mut d = status_only();
+        d.body_contains = Some("qkq".into());
+        let body = "<td>qkq</td>";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 5, 200, "sqli-union").is_some());
+    }
+
+    // Time-based blind SQLi: measurable delay past threshold → fires, even for
+    // a suppressed class and even when the status also flipped.
+    #[test]
+    fn time_based_sqli_still_fires() {
+        let mut d = status_only();
+        d.time_based_ms = Some(2500);
+        let body = "";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 500, 3200, 200, "sqli-time").is_some());
+    }
+
+    // LDAP injection error disclosure via regex → fires.
+    #[test]
+    fn ldap_error_disclosure_still_fires() {
+        let mut d = status_only();
+        d.status_change = None;
+        d.body_regex = Some("LDAP|ldap|directory".into());
+        let body = "javax.naming.directory error: invalid filter";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 5, 200, "ldap-inject").is_some());
+    }
+
+    // ── (c) out-of-scope classes keep their status-change semantics ──────────
+
+    // Auth-bypass / access-control style probes (not a differential-reliant
+    // injection class) still treat a status flip as their signal.
+    #[test]
+    fn status_flip_preserved_for_non_injection_class() {
+        let d = status_only();
+        let body = "{}";
+        assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 5, 403, "grpc-web-authz").is_some());
     }
 }
