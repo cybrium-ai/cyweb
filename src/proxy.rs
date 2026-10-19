@@ -375,7 +375,12 @@ mod tests {
     use super::*;
     #[test]
     fn dbl_crlf() {
-        assert_eq!(find_double_crlf(b"GET / HTTP/1.1\r\nHost: x\r\n\r\nbody"), Some(31));
+        // The header/body separator `\r\n\r\n` after "Host: x" starts at byte
+        // 23 (the request line is 16 bytes, "Host: x\r\n" is the next 9, so the
+        // blank-line CRLFCRLF begins at 23). The previous expectation of 31 was
+        // the buffer *length*, not the separator offset — the function was
+        // always correct.
+        assert_eq!(find_double_crlf(b"GET / HTTP/1.1\r\nHost: x\r\n\r\nbody"), Some(23));
         assert_eq!(find_double_crlf(b"GET / HTTP/1.1\r\n"), None);
     }
     #[test]

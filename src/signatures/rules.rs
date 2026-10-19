@@ -167,7 +167,7 @@ pub async fn check_rules(
     target: &str,
     rules: &[Rule],
     concurrency: usize,
-    baseline_hash: u64,
+    soft: &super::soft404::SoftError,
 ) -> Vec<Finding> {
     // v0.9 — clone-on-iterate so each closure receives an OWNED
     // `Rule` rather than a borrow. Borrowed `&Rule` makes the inner
@@ -179,6 +179,7 @@ pub async fn check_rules(
         .map(|rule| {
             let client = client.clone();
             let target = target.to_string();
+            let soft = soft.clone();
             async move {
                 let mut results = Vec::new();
 
@@ -242,18 +243,16 @@ pub async fn check_rules(
                         }
                     }
 
-                    // Soft-404 filter — only for rules with no body or header match
-                    if rule.match_body.is_none() && rule.match_header.is_none() && baseline_hash != 0 {
-                        use std::collections::hash_map::DefaultHasher;
-                        use std::hash::{Hash, Hasher};
-                        let mut hasher = DefaultHasher::new();
-                        body.chars()
-                            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-                            .collect::<String>()
-                            .hash(&mut hasher);
-                        if hasher.finish() == baseline_hash {
-                            continue;
-                        }
+                    // Soft-404 / catch-all filter. Runs for EVERY rule —
+                    // including ones with a body/header match — because an SPA
+                    // catch-all serves the SAME index.html for every path, and
+                    // a loose `match_body` (e.g. `{`, `==`, `assets`) matches
+                    // that index.html just as readily as the real file. If the
+                    // response is indistinguishable from the fingerprint
+                    // captured from a random nonexistent path, suppress.
+                    // (`matches` is a no-op on hosts that return real 404s.)
+                    if soft.matches(status, &body) {
+                        continue;
                     }
 
                     results.push(Finding {

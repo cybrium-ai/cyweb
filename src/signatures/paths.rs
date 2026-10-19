@@ -1,17 +1,18 @@
 //! Path/file discovery with false-positive reduction.
 //!
-//! Strategy: first request a known-nonexistent path to get the "baseline" 404
-//! response (body hash + length). Any path that returns the same body is a
-//! soft-404 from an SPA or catch-all route and is ignored.
+//! Strategy: the caller captures a [`SoftError`] fingerprint (from random
+//! nonexistent paths) once per host and passes it in. Any 200 whose response
+//! is indistinguishable from that catch-all fingerprint is a soft-404 from an
+//! SPA or catch-all route and is ignored.
 //!
 //! Additionally, certain paths require content validation — e.g. `.env` must
-//! contain `=`, `.git/config` must contain `[core]`.
+//! contain `=`, `.git/config` must contain `[core]` — and structured-file
+//! paths that return an HTML document are rejected as the SPA shell.
 
+use super::soft404::{self, SoftError};
 use super::{Finding, Severity};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 /// What to look for in the response body to confirm a true positive.
 #[derive(Clone)]
@@ -170,37 +171,28 @@ const PATHS: &[PathCheck] = &[
         cwe: "CWE-918", validator: Validator::BodyContains("ami-id") },
 ];
 
-/// Get a hash of the baseline 404 response for soft-404 detection.
-async fn get_baseline(client: &Client, target: &str) -> (u64, usize) {
-    let canary = format!("{}/cyweb-nonexistent-path-{}", target, uuid::Uuid::new_v4().as_simple());
-    match client.get(&canary).send().await {
-        Ok(resp) => {
-            if let Ok(body) = resp.text().await {
-                let len = body.len();
-                let mut hasher = DefaultHasher::new();
-                // Hash a normalized version (strip dynamic tokens like nonces)
-                let normalized = body
-                    .chars()
-                    .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-                    .collect::<String>();
-                normalized.hash(&mut hasher);
-                (hasher.finish(), len)
-            } else {
-                (0, 0)
-            }
-        }
-        Err(_) => (0, 0),
-    }
-}
-
-fn hash_body(body: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    let normalized = body
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect::<String>();
-    normalized.hash(&mut hasher);
-    hasher.finish()
+/// Paths whose response is expected to be a specific NON-HTML file type
+/// (git/svn/hg metadata, env, config, JSON, SQL, SQLite, archive). If such a
+/// path returns something that looks like an HTML document it is the SPA shell
+/// / an error page, never the file we asked for — so a loose body validator
+/// (e.g. `.env` → contains `=`, `config.json` → contains `{`) must not fire on
+/// it. This is the content-type sanity guard that complements the soft-404
+/// fingerprint comparison.
+fn expects_non_html(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.contains("/.git/")
+        || p.contains("/.svn/")
+        || p.contains("/.hg/")
+        || p.starts_with("/.env")
+        || p.ends_with(".env")
+        || p.ends_with(".json")
+        || p.ends_with(".yml")
+        || p.ends_with(".yaml")
+        || p.ends_with(".sql")
+        || p.ends_with(".sqlite")
+        || p.ends_with(".sqlite3")
+        || p.ends_with(".zip")
+        || p.ends_with(".tar.gz")
 }
 
 fn validate(body: &str, validator: &Validator) -> bool {
@@ -221,10 +213,8 @@ pub async fn check_paths(
     target: &str,
     concurrency: usize,
     max_paths: usize,
+    soft: &SoftError,
 ) -> (Vec<Finding>, usize) {
-    // Step 1: Establish baseline for soft-404 detection
-    let (baseline_hash, baseline_len) = get_baseline(client, target).await;
-
     // v0.9 — collect by-clone (owned `PathCheck`) so the closure
     // doesn't carry a lifetime to `PATHS`. Same reason as rules.rs:
     // borrowed iterator items break `tokio::spawn` HRTB inference
@@ -237,6 +227,7 @@ pub async fn check_paths(
             let client = client.clone();
             let target = target.to_string();
             let validator = check.validator.clone();
+            let soft = soft.clone();
             async move {
                 let url = format!("{}{}", target, check.path);
                 match client.get(&url).send().await {
@@ -247,13 +238,20 @@ pub async fn check_paths(
                             // Read body for validation
                             let body = resp.text().await.unwrap_or_default();
 
-                            // Soft-404 check: if body matches baseline, it's a catch-all
-                            let body_hash = hash_body(&body);
-                            let is_soft_404 = baseline_hash != 0
-                                && body_hash == baseline_hash
-                                && (body.len() as i64 - baseline_len as i64).unsigned_abs() < 100;
+                            // Soft-404 / catch-all check: if the response is
+                            // indistinguishable from the fingerprint captured
+                            // from a random nonexistent path, this host serves
+                            // index.html (or a fixed error page) for everything
+                            // — a 200 proves nothing. Suppress.
+                            if soft.matches(status, &body) {
+                                return None;
+                            }
 
-                            if is_soft_404 {
+                            // Content-type sanity: a check for a structured
+                            // non-HTML file (git/env/json/sql/...) that comes
+                            // back as an HTML document is the SPA shell, not
+                            // the file. Don't let a loose body validator fire.
+                            if expects_non_html(check.path) && soft404::looks_like_html(&body) {
                                 return None;
                             }
 
@@ -315,4 +313,68 @@ pub async fn check_paths(
         .await;
 
     (findings, total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::soft404::{looks_like_html, normalized_hash, SoftError};
+
+    const SPA_INDEX: &str = "<!doctype html><html><head><title>Cybrium</title>\
+        <script src=\"/assets/index-a1b2c3.js\"></script></head>\
+        <body><div id=\"root\"></div></body></html>";
+
+    fn catch_all() -> SoftError {
+        SoftError { is_catch_all: true, status: 200, body_hash: normalized_hash(SPA_INDEX), body_len: SPA_INDEX.len() }
+    }
+
+    // Structured-file paths are correctly classified.
+    #[test]
+    fn expects_non_html_covers_structured_files() {
+        assert!(expects_non_html("/.git/config"));
+        assert!(expects_non_html("/.env"));
+        assert!(expects_non_html("/.env.production"));
+        assert!(expects_non_html("/config.json"));
+        assert!(expects_non_html("/db.sqlite3"));
+        assert!(expects_non_html("/backup.tar.gz"));
+        // Admin panels / HTML pages are NOT structured-file checks.
+        assert!(!expects_non_html("/admin"));
+        assert!(!expects_non_html("/wp-login.php"));
+    }
+
+    // The /config.json FP path: catch-all serves index.html (contains `{` in a
+    // script? no — but the loose `{` validator would match any inline JSON).
+    // Both the soft-404 fingerprint AND the html content-type guard suppress it.
+    #[test]
+    fn spa_index_on_structured_path_is_suppressed_two_ways() {
+        let soft = catch_all();
+        // (1) fingerprint match — identical body.
+        assert!(soft.matches(200, SPA_INDEX));
+        // (2) content-type guard — the path expects JSON, body is HTML.
+        assert!(expects_non_html("/config.json"));
+        assert!(looks_like_html(SPA_INDEX));
+    }
+
+    // A genuinely exposed /.git/config with git-looking content still validates
+    // and is NOT suppressed: it isn't the catch-all body and isn't HTML.
+    #[test]
+    fn real_git_config_still_fires() {
+        let soft = catch_all();
+        let git = "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\
+                   [remote \"origin\"]\n\turl = git@github.com:acme/secret.git\n";
+        assert!(!soft.matches(200, git), "real git config is not the catch-all body");
+        assert!(!looks_like_html(git), "git config is not HTML");
+        assert!(validate(git, &Validator::BodyContains("[core]")), "git config validates");
+    }
+
+    // A real exposed .env on a non-catch-all host (server returns true 404s)
+    // fires: matches() is a no-op, validator passes.
+    #[test]
+    fn real_env_on_normal_server_still_fires() {
+        let no_catch_all = SoftError { is_catch_all: false, status: 404, body_hash: 0, body_len: 0 };
+        let env = "SECRET_KEY=supersecret\nDATABASE_URL=postgres://u:p@db/app\n";
+        assert!(!no_catch_all.matches(200, env));
+        assert!(!looks_like_html(env));
+        assert!(validate(env, &Validator::BodyContains("=")));
+    }
 }
