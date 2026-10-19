@@ -9,6 +9,7 @@ pub mod paths;
 pub mod retirejs;
 pub mod rules;
 pub mod server;
+pub mod soft404;
 
 /// A single finding from a scan.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

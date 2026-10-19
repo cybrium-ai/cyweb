@@ -743,6 +743,21 @@ fn is_differential_reliant_injection(category: &str) -> bool {
         || c.starts_with("nosqli")
 }
 
+/// Cache poisoning / cache deception. Proving it requires showing an
+/// attacker-influenced response was CACHED and is served back to others — a
+/// cache-hit indicator, or a reflected unkeyed input observed in a
+/// subsequently-cached response. Those positive signals (`header_contains` on
+/// `Cache-Control`/`X-Cache`, or `body_contains` reflecting the probe) are
+/// evaluated in the corroborator branches above. A bare baseline→payload
+/// status/length flip is NOT proof — a WAF/normalisation `200 -> 403` is the
+/// classic false positive. So, like the differential-reliant injection
+/// classes, if control reaches the bare `status_change` branch for a
+/// cache-poisoning category, no corroborator matched and we suppress.
+fn is_cache_poisoning(category: &str) -> bool {
+    let c = category.to_ascii_lowercase();
+    c.starts_with("cache-poison") || c.starts_with("cache_poison")
+}
+
 fn evaluate_detection(
     detect: &DetectConfig,
     body: &str,
@@ -813,6 +828,12 @@ fn evaluate_detection(
         // here means NONE corroborated — downgrade to not-a-finding rather than
         // raise a false critical/high. Kills the `?format=` 200→404 FP class.
         if is_differential_reliant_injection(category) {
+            return None;
+        }
+        // Same discipline for cache poisoning/deception: a bare status flip
+        // (e.g. a WAF 200->403) does not demonstrate that a poisoned response
+        // was cached and served to others.
+        if is_cache_poisoning(category) {
             return None;
         }
         return Some(format!("Status changed: {} -> {} (baseline: {})", baseline_status, status, baseline_status));
@@ -1064,5 +1085,73 @@ mod injection_corroboration_tests {
         let d = status_only();
         let body = "{}";
         assert!(evaluate_detection(&d, body, &HeaderMap::new(), 200, 5, 403, "grpc-web-authz").is_some());
+    }
+}
+
+#[cfg(test)]
+mod cache_poisoning_corroboration_tests {
+    //! Cache poisoning / deception requires a positive corroborator (a
+    //! cache-hit / Cache-Control indicator, or a reflected unkeyed input). A
+    //! bare baseline→payload status flip is NOT proof. Regression target: the
+    //! `cache-key-norm-01` / `cache-xou-01` probes raising a Medium/High on
+    //! `Status changed: 200 -> 403` (a WAF/normalisation response).
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    fn status_only() -> DetectConfig {
+        DetectConfig {
+            body_contains: None,
+            body_not_contains: None,
+            body_regex: None,
+            status_change: Some(true),
+            status_error: None,
+            time_based_ms: None,
+            header_contains: None,
+        }
+    }
+
+    // ── (a) the FP is suppressed ────────────────────────────────────────────
+
+    // The exact reported FP: a 200->403 WAF/normalisation flip with no cache
+    // corroborator. Category comes from the payload file id ("cache-poison").
+    #[test]
+    fn bare_status_flip_suppressed_for_cache_poisoning() {
+        let d = status_only();
+        let body = "<html><body>403 Forbidden</body></html>";
+        assert!(
+            evaluate_detection(&d, body, &HeaderMap::new(), 403, 5, 200, "cache-poison").is_none(),
+            "a bare 200->403 flip must not raise a cache-poisoning finding"
+        );
+    }
+
+    // ── (b) genuine cache findings still fire ───────────────────────────────
+
+    // A real cache-hit corroborator (Cache-Control: public) is evaluated before
+    // the status branch and still fires.
+    #[test]
+    fn cache_control_corroborator_still_fires() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cache-control", "public, max-age=600".parse().unwrap());
+        let mut d = status_only();
+        let mut hc = HashMap::new();
+        hc.insert("Cache-Control".to_string(), "public".to_string());
+        d.header_contains = Some(hc);
+        assert!(
+            evaluate_detection(&d, "", &headers, 200, 5, 200, "cache-poison").is_some(),
+            "a Cache-Control: public corroborator must still raise the finding"
+        );
+    }
+
+    // A reflected unkeyed input (poisoned Host echoed into the body) still
+    // fires via the body_contains corroborator.
+    #[test]
+    fn reflected_unkeyed_input_still_fires() {
+        let mut d = status_only();
+        d.body_contains = Some("evil.cybrium.ai".into());
+        let body = "<link rel=canonical href=https://evil.cybrium.ai/>";
+        assert!(
+            evaluate_detection(&d, body, &HeaderMap::new(), 200, 5, 200, "cache-poison").is_some(),
+            "a reflected poisoned Host must still raise the finding"
+        );
     }
 }

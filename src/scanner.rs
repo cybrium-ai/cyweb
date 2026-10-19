@@ -563,6 +563,14 @@ pub async fn run_scan_with_sink(
     }
     requests_made += 1;
 
+    // Capture the soft-404 / catch-all fingerprint ONCE per host (one or two
+    // cheap requests). SPAs and catch-all routes return a 200 `index.html` for
+    // every unmatched path, so a bare 200 on a probed path proves nothing. Both
+    // path discovery (Phase 4) and the signature rule engine (Phase 6) compare
+    // candidate responses against this fingerprint before raising a finding.
+    let soft_404 = signatures::soft404::SoftError::probe(&client, &target).await;
+    requests_made += 2;
+
     // Phase 2: Security header analysis
     if run_phase("headers") {
         eprintln!("{}", "Phase 2: Security header analysis...".cyan());
@@ -591,7 +599,7 @@ pub async fn run_scan_with_sink(
             format!("Phase 4: Path discovery ({} paths)...", config.max_paths).cyan()
         );
         let (path_findings, pc) =
-            signatures::paths::check_paths(&client, &target, config.threads, config.max_paths).await;
+            signatures::paths::check_paths(&client, &target, config.threads, config.max_paths, &soft_404).await;
         paths_checked = pc;
         eprintln!(
             "  {} paths checked, {} findings",
@@ -654,9 +662,11 @@ pub async fn run_scan_with_sink(
         "{}",
         format!("Phase 6: Signature rules ({} rules{})...", rules.len(), if config.full_scan { " — full" } else { "" }).cyan()
     );
-    let baseline_hash = compute_baseline(&client, &target).await;
+    // Reuse the soft-404 fingerprint's body hash as the fuzz/mutate baseline —
+    // it is exactly the hash of a nonexistent path's body, so no extra request.
+    let baseline_hash = soft_404.baseline_hash();
     let rule_findings =
-        signatures::rules::check_rules(&client, &target, &rules, config.threads, baseline_hash).await;
+        signatures::rules::check_rules(&client, &target, &rules, config.threads, &soft_404).await;
     eprintln!("  {} findings from {} rules", rule_findings.len(), rules.len());
     requests_made += rules.len();
     stream_to_sink(&mut sink, &rule_findings);
@@ -1148,21 +1158,6 @@ impl DeadlineState {
     }
     fn stopped_phase(&self) -> Option<String> {
         self.stopped_phase.lock().unwrap().clone()
-    }
-}
-
-async fn compute_baseline(client: &Client, target: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let canary = format!("{}/cyweb-baseline-{}", target, uuid::Uuid::new_v4().as_simple());
-    match client.get(&canary).send().await {
-        Ok(r) => {
-            let body = r.text().await.unwrap_or_default();
-            let mut h = DefaultHasher::new();
-            body.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().hash(&mut h);
-            h.finish()
-        }
-        Err(_) => 0,
     }
 }
 
