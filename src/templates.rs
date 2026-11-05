@@ -169,6 +169,14 @@ pub struct Matcher {
     /// Internal condition: and/or for multiple values within this matcher.
     #[serde(default = "default_condition")]
     pub condition: String,
+    /// `internal: true` matchers gate a multi-step flow (and feed
+    /// extractors) but must NEVER themselves emit a finding. Upstream
+    /// templates mark their liveness/extraction steps this way; the
+    /// reporting matcher is a separate, non-internal one. Honouring this
+    /// flag is what stops an intermediate `status == 200` gate from being
+    /// reported as a standalone vulnerability.
+    #[serde(default)]
+    pub internal: bool,
 }
 
 fn default_part() -> String { "body".into() }
@@ -645,8 +653,10 @@ async fn execute_template(
                 }
             }
 
-            // Evaluate matchers
-            let matched = evaluate_matchers(
+            // Evaluate matchers for a *reportable* finding. This skips
+            // `internal: true` gate matchers and requires at least one
+            // genuine confirmation signal — see `evaluate_report_matchers`.
+            let matched = evaluate_report_matchers(
                 &step.matchers,
                 &step.matchers_condition,
                 &resp_body,
@@ -656,7 +666,11 @@ async fn execute_template(
             );
 
             if matched {
-                let evidence = build_evidence(&step.matchers, &resp_body, &resp_headers, status);
+                // Evidence is built only from the reporting (non-internal)
+                // matchers so we never surface an internal gate's values.
+                let report_matchers: Vec<Matcher> =
+                    step.matchers.iter().filter(|m| !m.internal).cloned().collect();
+                let evidence = build_evidence(&report_matchers, &resp_body, &resp_headers, status);
 
                 findings.push(Finding {
                     id: format!("{}-step{}", tpl.display_id(), step_idx),
@@ -820,7 +834,21 @@ fn headers_to_string(headers: &reqwest::header::HeaderMap) -> String {
 
 // ── Matcher engine ───────────────────────────────────────────────────────────
 
-fn evaluate_matchers(
+/// Decide whether a request step should emit a *finding*.
+///
+/// Two rules, both aimed at the "a 200 came back" false-positive class:
+///
+/// 1. `internal: true` matchers are excluded. Upstream multi-step templates
+///    use them to gate the flow / feed extractors; the reporting matcher is
+///    a separate non-internal one. A step whose matchers are *all* internal
+///    therefore reports nothing.
+/// 2. The match must be carried by at least one *confirming* matcher — one
+///    that tests actual response content or an out-of-band interaction, not
+///    merely the HTTP status (`type: status`, a `size` check, a bare
+///    negative matcher, or a dsl expression that only compares
+///    `status_code`). A step whose only satisfied matcher is "the server
+///    answered 2xx" is not a vulnerability.
+fn evaluate_report_matchers(
     matchers: &[Matcher],
     condition: &str,
     body: &str,
@@ -828,19 +856,77 @@ fn evaluate_matchers(
     status: u16,
     variables: &HashMap<String, String>,
 ) -> bool {
-    if matchers.is_empty() {
+    let report: Vec<&Matcher> = matchers.iter().filter(|m| !m.internal).collect();
+    if report.is_empty() {
         return false;
     }
 
-    let results: Vec<bool> = matchers.iter().map(|m| {
-        let matched = evaluate_single_matcher(m, body, headers, status, variables);
-        if m.negative { !matched } else { matched }
+    // (matched, confirming) per reporting matcher.
+    let results: Vec<(bool, bool)> = report.iter().map(|m| {
+        let raw = evaluate_single_matcher(m, body, headers, status, variables);
+        let matched = if m.negative { !raw } else { raw };
+        (matched, matcher_is_confirming(m))
     }).collect();
 
-    match condition {
-        "and" => results.iter().all(|&r| r),
-        _ => results.iter().any(|&r| r), // "or" is default
+    let combined = match condition {
+        "and" => results.iter().all(|&(matched, _)| matched),
+        _ => results.iter().any(|&(matched, _)| matched), // "or" default
+    };
+    if !combined {
+        return false;
     }
+
+    // Require genuine confirmation. For "and" every matcher matched, so the
+    // set just needs to contain one confirming matcher. For "or" the
+    // specific matcher(s) that matched must include a confirming one, so a
+    // lone `status == 200` matching inside an OR never reports.
+    match condition {
+        "and" => results.iter().any(|&(_, confirming)| confirming),
+        _ => results.iter().any(|&(matched, confirming)| matched && confirming),
+    }
+}
+
+/// Whether a matcher, when it matches, constitutes genuine confirmation of a
+/// vulnerability rather than mere liveness ("the server answered").
+fn matcher_is_confirming(m: &Matcher) -> bool {
+    match m.matcher_type.as_str() {
+        // Status/size alone only prove the server responded.
+        "status" | "size" => false,
+        // A lone negative matcher ("string absent") matches almost any page
+        // and is only meaningful as a post-exploitation gate in a flow we
+        // don't replay — never a standalone confirmation.
+        "word" | "regex" | "binary" => !m.negative,
+        // A dsl matcher confirms only if some expression tests real content
+        // or an out-of-band interaction, not just status/timing.
+        "dsl" => m.dsl.iter().any(|e| dsl_expr_is_confirming(e)),
+        _ => false,
+    }
+}
+
+/// Whether a single dsl expression inspects real response content (the body,
+/// the response headers, or the full response) or an out-of-band interaction
+/// — i.e. something that could actually evidence a vulnerability, as opposed
+/// to a liveness / response-shape check.
+///
+/// The test keys off the content *source* referenced, not the function used:
+/// `contains(body, …)` confirms, but `contains(content_type, …)` does not —
+/// a content-type (`text/html`) is a shape signal, no more evidence of a
+/// vulnerability than a 200 status is, since every HTML page returns it. Such
+/// a check is still a legitimate *conjunct* in an AND matcher (it continues to
+/// gate), but on its own it must not promote a bare 200 into a finding.
+///
+/// Deliberately NOT confirming on their own: `status_code`, `content_type`,
+/// `duration`, `unix_time`, and bare numeric comparisons.
+fn dsl_expr_is_confirming(expr: &str) -> bool {
+    let e = expr.to_ascii_lowercase();
+    // Content sources / evidence a real vuln signal would reference. A hash
+    // or encoding call (`mmh3(base64(body))`) is listed because it is only
+    // ever computed over response content.
+    const SOURCE_TOKENS: &[&str] = &[
+        "body", "header", "response", "interactsh", "oob_",
+        "md5(", "sha1(", "sha256(", "mmh3", "base64",
+    ];
+    SOURCE_TOKENS.iter().any(|t| e.contains(t))
 }
 
 fn evaluate_single_matcher(
@@ -852,7 +938,17 @@ fn evaluate_single_matcher(
 ) -> bool {
     let source = match matcher.part.as_str() {
         "header" => headers_to_string(headers),
-        "all" => format!("{}\n{}", headers_to_string(headers), body),
+        "all" | "response" | "raw" => format!("{}\n{}", headers_to_string(headers), body),
+        // Out-of-band interaction channels (OAST / interactsh). This
+        // engine's synchronous HTTP path carries no interaction data, so
+        // these parts are empty — a word/regex matcher against them must
+        // therefore be FALSE, never fall through to the response body.
+        // Falling back to `body` (the old `_` behaviour) let an
+        // `interactsh_protocol` word matcher match incidental body text and
+        // report a blind-RCE/SSRF finding against a page that never issued
+        // any callback. Platform-side OAST correlation lives on a separate
+        // code path.
+        p if p.starts_with("interactsh") || p.starts_with("oob") => String::new(),
         _ => body.to_string(),
     };
 
@@ -890,8 +986,28 @@ fn evaluate_single_matcher(
         }
 
         "dsl" => {
-            // Simple DSL evaluation for common patterns
-            matcher.dsl.iter().any(|expr| evaluate_dsl(expr, body, headers, status))
+            // Each `dsl:` list item is a separate boolean expression. The
+            // matcher's `condition` (and/or) combines them — exactly like
+            // the `word`/`regex` arms above. This arm previously hard-coded
+            // `.any()` (OR), ignoring `condition`. Converted upstream
+            // templates almost universally AND a real signal with a
+            // liveness guard, e.g.
+            //     dsl:
+            //       - contains(body, "WDMyCloud")
+            //       - status_code == 200
+            //     condition: and
+            // With the old `.any()`, the always-true `status_code == 200`
+            // alone fired the matcher on ANY bare 2xx response — the FP
+            // class that emitted ~770 bogus criticals against a zero-vuln
+            // page. Respecting `condition` means a finding now requires the
+            // genuine confirmation expression to be true, not merely a 200.
+            let results: Vec<bool> = matcher.dsl.iter()
+                .map(|expr| evaluate_dsl(expr, body, headers, status))
+                .collect();
+            match matcher.condition.as_str() {
+                "and" => results.iter().all(|&r| r),
+                _ => results.iter().any(|&r| r), // "or" is the nuclei default
+            }
         }
 
         _ => false,
@@ -943,6 +1059,30 @@ pub fn evaluate_dsl(expr: &str, body: &str, headers: &reqwest::header::HeaderMap
                     };
                 }
             }
+        }
+    }
+
+    // contains_all(haystack, n1, n2, ...) — every needle must be present.
+    // Must be tested before `contains` (whose prefix is a substring of this
+    // name, though `call_args` is exact-prefix so order is not strictly
+    // required). A very common nuclei helper; without it, templates whose
+    // real confirmation is `contains_all(body, …)` could never fire.
+    if let Some(args) = call_args(expr, "contains_all") {
+        if args.len() >= 2 {
+            let hay = eval_value(&args[0], body, headers, status);
+            return args[1..].iter().all(|n| {
+                hay.contains(eval_value(n, body, headers, status).as_str())
+            });
+        }
+    }
+
+    // contains_any(haystack, n1, n2, ...) — any needle present.
+    if let Some(args) = call_args(expr, "contains_any") {
+        if args.len() >= 2 {
+            let hay = eval_value(&args[0], body, headers, status);
+            return args[1..].iter().any(|n| {
+                hay.contains(eval_value(n, body, headers, status).as_str())
+            });
         }
     }
 
@@ -1042,7 +1182,26 @@ fn eval_value(expr: &str, body: &str, headers: &reqwest::header::HeaderMap, stat
     // Bareword identifiers
     match expr {
         "body" | "all" => return body.to_string(),
+        // Full response (status line + headers + body) for
+        // `contains(response, ...)` style matchers.
+        "response" | "raw" => {
+            return format!("{}\n{}", headers_to_string(headers), body);
+        }
+        // Content-Type header value — a very common liveness/shape token.
+        "content_type" => {
+            return headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+        }
         "status_code"  => return status.to_string(),
+        // Out-of-band interaction tokens: no interaction data on this
+        // path, so they resolve to empty. Returning the literal token name
+        // (the old `<unknown>` fallthrough) risked `contains(interactsh_protocol, "protocol")`
+        // style accidental matches.
+        "interactsh_protocol" | "interactsh_request" | "interactsh_response"
+        | "oob_protocol" | "oob_request" | "oob_response" => return String::new(),
         ""             => return String::new(),
         _ => {}
     }
@@ -1341,6 +1500,13 @@ mod dsl_tests {
         assert!(!evaluate_dsl("status_code >= 400", "", &h(), 200));
     }
 
+    #[test] fn contains_all_and_any() {
+        assert!( evaluate_dsl("contains_all(body, \"foo\", \"bar\")", "x foo y bar z", &h(), 200));
+        assert!(!evaluate_dsl("contains_all(body, \"foo\", \"bar\")", "x foo y", &h(), 200));
+        assert!( evaluate_dsl("contains_any(body, \"nope\", \"bar\")", "only bar here", &h(), 200));
+        assert!(!evaluate_dsl("contains_any(body, \"nope\", \"zip\")", "nothing matches", &h(), 200));
+    }
+
     #[test] fn contains_body() {
         assert!( evaluate_dsl("contains(body, \"hello\")", "hello world", &h(), 200));
         assert!(!evaluate_dsl("contains(body, \"goodbye\")", "hello world", &h(), 200));
@@ -1481,6 +1647,175 @@ mod dsl_tests {
         assert_eq!(enc, "616263");
         let dec = eval_value("hex_decode(\"616263\")", "", &h(), 200);
         assert_eq!(dec, "abc");
+    }
+
+    // ── Regression: dsl matcher must respect `condition` ──────────────────
+    // Guards the FP class where a bare HTTP 200 on a zero-vuln page fired
+    // ~770 bogus criticals because the dsl matcher arm hard-coded OR and
+    // ignored `condition: and`.
+
+    fn dsl_matcher(exprs: &[&str], condition: &str) -> Matcher {
+        Matcher {
+            matcher_type: "dsl".into(),
+            words: vec![],
+            regex: vec![],
+            status: vec![],
+            size: vec![],
+            binary: vec![],
+            dsl: exprs.iter().map(|s| s.to_string()).collect(),
+            part: "body".into(),
+            negative: false,
+            condition: condition.into(),
+            internal: false,
+        }
+    }
+
+    #[test] fn dsl_and_requires_all_expressions() {
+        // The canonical converted-template shape: a real body signal ANDed
+        // with a liveness guard. On a bare 200 page whose body lacks the
+        // signal, the matcher must NOT fire.
+        let m = dsl_matcher(
+            &["contains(body, \"WDMyCloud\")", "status_code == 200"],
+            "and",
+        );
+        let vars = HashMap::new();
+        // Zero-vuln page: 200, body has no "WDMyCloud" → must be false.
+        assert!(
+            !evaluate_single_matcher(&m, "Hello World", &h(), 200, &vars),
+            "status_code==200 alone must not satisfy a condition:and dsl matcher"
+        );
+        // Genuine target: body carries the signal → must fire (recall kept).
+        assert!(
+            evaluate_single_matcher(&m, "welcome to WDMyCloud", &h(), 200, &vars),
+            "condition:and dsl matcher must still fire when every expression is true"
+        );
+        // 200 present but body signal missing on a different page → false.
+        assert!(
+            !evaluate_single_matcher(&m, "unrelated body", &h(), 200, &vars),
+        );
+    }
+
+    #[test] fn dsl_or_fires_on_any_expression() {
+        // An explicit condition:or still fires when any single expression
+        // holds — recall for the (rare) OR-authored templates is preserved.
+        let m = dsl_matcher(
+            &["contains(body, \"never-present\")", "status_code == 200"],
+            "or",
+        );
+        let vars = HashMap::new();
+        assert!(evaluate_single_matcher(&m, "plain body", &h(), 200, &vars));
+    }
+
+    #[test] fn dsl_zero_vuln_page_yields_no_match() {
+        // Full matcher-set evaluation over the exact zero-vuln shape:
+        // a critical template that ANDs a vendor-specific body signal with
+        // status_code == 200 must produce no match against a trivial page.
+        let m = dsl_matcher(
+            &["contains(body, \"1Password SCIM Bridge Login\")", "status_code == 200"],
+            "and",
+        );
+        let vars = HashMap::new();
+        let matched = evaluate_report_matchers(
+            std::slice::from_ref(&m),
+            "or", // request-level matchers_condition default
+            "<!doctype html><html><body><h1>Hello</h1></body></html>",
+            &h(),
+            200,
+            &vars,
+        );
+        assert!(!matched, "zero-vuln 200 page must not match a condition:and dsl template");
+    }
+
+    // ── Regression: a step must have a genuine confirmation signal ────────
+    // `evaluate_report_matchers` skips `internal` matchers and requires the
+    // match to be carried by a content/OAST matcher — not a bare 200.
+
+    fn matcher(t: &str) -> Matcher {
+        Matcher {
+            matcher_type: t.into(),
+            words: vec![], regex: vec![], status: vec![], size: vec![],
+            binary: vec![], dsl: vec![], part: "body".into(),
+            negative: false, condition: "or".into(), internal: false,
+        }
+    }
+
+    #[test] fn status_only_matcher_does_not_report() {
+        // `type: status, status: [200]` matching a 200 is liveness, not a vuln.
+        let mut m = matcher("status");
+        m.status = vec![200];
+        let vars = HashMap::new();
+        assert!(!evaluate_report_matchers(
+            std::slice::from_ref(&m), "or", "hello", &h(), 200, &vars),
+            "a bare status:200 matcher must never emit a finding");
+    }
+
+    #[test] fn internal_matcher_never_reports() {
+        // An internal gate that happens to match must not emit a finding,
+        // even though it's a real word match.
+        let mut m = matcher("word");
+        m.words = vec!["html".into()];
+        m.internal = true;
+        let vars = HashMap::new();
+        assert!(!evaluate_report_matchers(
+            std::slice::from_ref(&m), "or", "<html>", &h(), 200, &vars),
+            "internal:true matchers must never emit a finding");
+    }
+
+    #[test] fn lone_negative_matcher_does_not_report() {
+        // `word negative:true` ("string absent") matches almost any page;
+        // alone it is not a confirmation.
+        let mut m = matcher("word");
+        m.words = vec!["admin-panel-marker".into()];
+        m.negative = true;
+        let vars = HashMap::new();
+        assert!(!evaluate_report_matchers(
+            std::slice::from_ref(&m), "or", "unrelated", &h(), 200, &vars),
+            "a lone negative matcher must not emit a finding");
+    }
+
+    #[test] fn oast_word_matcher_against_empty_channel_is_false() {
+        // A word matcher on the interactsh_protocol part must evaluate
+        // against the (empty) OOB channel, not fall back to the body.
+        let mut m = matcher("word");
+        m.part = "interactsh_protocol".into();
+        m.words = vec!["dns".into()];
+        let vars = HashMap::new();
+        // Body literally contains "dns" — must still NOT match, because the
+        // part is the OOB channel, which carries no interaction here.
+        assert!(!evaluate_single_matcher(&m, "resolve dns now", &h(), 200, &vars),
+            "interactsh_protocol word matcher must not read the response body");
+    }
+
+    #[test] fn status_plus_body_word_still_reports() {
+        // Positive control / recall guard: a real finding — status 200 AND a
+        // genuine body signal — must still be reported.
+        let mut status_m = matcher("status");
+        status_m.status = vec![200];
+        let mut word_m = matcher("word");
+        word_m.words = vec!["Fortinet SSL-VPN".into()];
+        let set = vec![status_m, word_m];
+        let vars = HashMap::new();
+        assert!(evaluate_report_matchers(
+            &set, "and", "login page: Fortinet SSL-VPN", &h(), 200, &vars),
+            "a status+content match must still report (no recall regression)");
+    }
+
+    #[test] fn dsl_with_body_signal_still_reports() {
+        // Recall guard for dsl: a confirming dsl matcher that genuinely
+        // matches must still fire.
+        let m = dsl_matcher(
+            &["status_code == 200", "contains(body, \"phpMyAdmin\")"],
+            "and",
+        );
+        let vars = HashMap::new();
+        // Body lacks the token → no match.
+        assert!(!evaluate_report_matchers(
+            std::slice::from_ref(&m), "or", "plain page", &h(), 200, &vars),
+            "sanity: missing token must not match");
+        // Body carries the token → confirming dsl matcher must still report.
+        assert!(evaluate_report_matchers(
+            std::slice::from_ref(&m), "or", "welcome to phpMyAdmin", &h(), 200, &vars),
+            "a confirming dsl matcher that matches must still report");
     }
 }
 
